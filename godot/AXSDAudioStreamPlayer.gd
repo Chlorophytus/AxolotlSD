@@ -16,7 +16,12 @@
 #   Audio player for AxolotlSD files
 extends AudioStreamPlayer
 
-@export var audios: Array[AXSDAudioWAVProfile]
+@export var audio_mappings: Dictionary # anything not channel 10
+@export var drum_mappings: Dictionary # anything that's channel 10
+
+@export var audio_profiles: Array[AXSDAudioWAVProfile]
+@export var drum_profiles: Array[AXSDAudioWAVProfile]
+
 @export var current_song: AXSDAudioStreamData
 
 var ticks = 0.0
@@ -140,8 +145,8 @@ func _voices_panic():
 
 func _voices_init():
 	self.voices = []
-	for profile in self.audios:
-		self.voices.append(Voice.new(profile))
+	for i in range(16):
+		self.voices.append(Voice.new(self.audio_profiles[0]))
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.
 func _process(delta):
@@ -155,8 +160,20 @@ func _process(delta):
 		var events = self.current_song.run_tick(delta)
 		for e in events:
 			match e.type:
+				AXSDAudioStreamData.EventType.INSTRUMENT_CHANGE:
+					var id = self.audio_mappings[e.program]
+					self.voices[e.channel].profile = self.audio_profiles[id]
 				AXSDAudioStreamData.EventType.NOTE_ON:
-					self.voices[e.channel].on(self.playback, e.note, e.velocity / 127.0)
+					if e.channel == 9:
+						# Drum notes go to drum mappings
+						if e.note in self.drum_mappings.keys():
+							var drum_id = self.drum_mappings[e.note]
+							self.voices[9].profile = self.drum_profiles[drum_id]
+							
+							self.voices[9].on(self.playback, 69, e.velocity / 127.0)
+					else:
+						# Melody notes go to audio mappings
+						self.voices[e.channel].on(self.playback, e.note, e.velocity / 127.0)
 				AXSDAudioStreamData.EventType.NOTE_OFF:
 					self.voices[e.channel].off()
 				AXSDAudioStreamData.EventType.END_OF_MUSIC:

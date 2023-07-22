@@ -21,7 +21,7 @@ extends Resource
 
 class_name AXSDAudioStreamData
 
-const VERSION = 0x0001
+const VERSION = 0x0002
 const MAGIC = 0x44535841
 
 var has_song = false
@@ -75,6 +75,11 @@ var tick: float = 0.0
 					var channel = file.get_8()
 					var pitch = file.get_32()
 					loaded.append(EventPitchwheel.new(etick, channel, pitch))
+				EventType.INSTRUMENT_CHANGE:
+					var etick = file.get_32()
+					var channel = file.get_8()
+					var program = file.get_8()
+					loaded.append(EventInstrumentChange.new(etick, channel, program))
 				EventType.END_OF_MUSIC:
 					var etick = file.get_32()
 					loaded.append(EventEndOfMusic.new(etick))
@@ -109,6 +114,7 @@ enum EventType {
 	NOTE_ON = 0x01,
 	NOTE_OFF = 0x02,
 	PITCHWHEEL = 0x03,
+	INSTRUMENT_CHANGE = 0x04,
 	VERSION = 0xFC,
 	REFRESH_RATE = 0xFD,
 	END_OF_MUSIC = 0xFE,
@@ -150,3 +156,12 @@ class EventEndOfMusic extends Event:
 	func _init(etime: int):
 		self.type = EventType.END_OF_MUSIC
 		self.time = etime
+
+class EventInstrumentChange extends Event:
+	var channel: int
+	var program: int
+	func _init(etime: int, echannel: int, eprogram: int):
+		self.type = EventType.INSTRUMENT_CHANGE
+		self.time = etime
+		self.channel = echannel
+		self.program = eprogram

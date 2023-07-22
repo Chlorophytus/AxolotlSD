@@ -24,10 +24,10 @@ RATE = 60 # hertz
 with open(sys.argv[2], 'wb') as writer:
     reader = mido.MidiFile(sys.argv[1])
     writer.write(b'AXSD')
-    writer.write(struct.pack('<BH', 0xFC, 0x0001))
+    writer.write(struct.pack('<BH', 0xFC, 0x0002))
     writer.write(struct.pack('<BI', 0xFD, RATE))
     tempo = 500000.0
-    
+
     # pitch bends affect all notes in a channel
     channel_bend = [0.0] * 16
     end_of_track = None
@@ -62,6 +62,8 @@ with open(sys.argv[2], 'wb') as writer:
                         writer.write(struct.pack('<BIB', 0x02, int(real_time * RATE), message.channel))
                     case 'pitchwheel':
                         writer.write(struct.pack('<BIBi', 0x03, int(real_time * RATE), message.channel, message.pitch))
+                    case 'program_change':
+                        writer.write(struct.pack('<BIBB', 0x04, int(real_time * RATE), message.channel, message.program))
                     case _:
                         pass
 
