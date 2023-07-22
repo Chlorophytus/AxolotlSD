@@ -24,6 +24,8 @@ extends AudioStreamPlayer
 
 @export var current_song: AXSDAudioStreamData
 
+@export var sequencing: bool = true
+
 var ticks = 0.0
 var playback: AudioStreamPlaybackPolyphonic
 var poly_stream: AudioStreamPolyphonic
@@ -45,14 +47,14 @@ class Voice:
 		var amplitude: float = 0.0
 		var velocity: float = 0.0
 		var state: ADSRState = ADSRState.ATTACK
-		
-	
+
+
 	var profile: AXSDAudioWAVProfile = null
 	var assignments: Array[Assignment] = []
-	
+
 	func _init(vprofile: AXSDAudioWAVProfile):
 		self.profile = vprofile
-	
+
 	func tick(playback: AudioStreamPlaybackPolyphonic, delta: float):
 		for i in range(self.assignments.size()):
 			var assignment = self.assignments[i]
@@ -107,7 +109,7 @@ class Voice:
 		self.assignments = self.assignments.filter(func(assign):
 			return assign.state != ADSRState.OFF
 		)
-	
+
 	func on(playback: AudioStreamPlaybackPolyphonic, note: int, velocity: float):
 		var assignment = Assignment.new()
 		assignment.velocity = velocity
@@ -118,7 +120,7 @@ class Voice:
 			self.assignments.append(assignment)
 		else:
 			print_debug("invalid voice on")
-		
+
 	func off():
 		var size = self.assignments.size()
 		for i in range(size):
@@ -126,13 +128,15 @@ class Voice:
 			if assignment.key:
 				assignment.key = false
 				break
-	
+
 
 var voices: Array[Voice]
 
 # Called when the node enters the scene tree for the first time.
 func _ready():
-	pass
+	self.poly_stream = self.get_stream()
+	self.playback = self.get_stream_playback()
+	_voices_init()
 
 func _voices_panic():
 	for voice in self.voices:
@@ -150,13 +154,7 @@ func _voices_init():
 
 # Called every frame. 'delta' is the elapsed time since the previous frame.
 func _process(delta):
-	if self.get_meta("Sequencing"):
-		if not self.playing:
-			self.play()
-			self.poly_stream = self.get_stream()
-			self.playback = self.get_stream_playback()
-			_voices_init()
-
+	if self.sequencing:
 		var events = self.current_song.run_tick(delta)
 		for e in events:
 			match e.type:
@@ -169,7 +167,7 @@ func _process(delta):
 						if e.note in self.drum_mappings.keys():
 							var drum_id = self.drum_mappings[e.note]
 							self.voices[9].profile = self.drum_profiles[drum_id]
-							
+
 							self.voices[9].on(self.playback, 69, e.velocity / 127.0)
 					else:
 						# Melody notes go to audio mappings
@@ -180,5 +178,5 @@ func _process(delta):
 					self.current_song.run_tick(delta, true)
 		for voice in self.voices:
 			voice.tick(self.playback, delta)
-		
+
 		ticks += delta
