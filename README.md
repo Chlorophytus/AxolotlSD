@@ -28,12 +28,22 @@ Each AXSDAudioWAVProfile is mapped to a MIDI channel. The sequencer exporter may
 - `a440`: A440 pitch in integer MIDI note pitch.
 
 ## `export/export.py`
-Install mido. This is a Python 3 script that handles exporting MIDI note data to AxolotlSD sequencer note data.
+### Going into venv then using pip
+```shell
+$ cd export
+$ python3 -m venv .
+$ . ./bin/activate
+$ pip install -r requirements.txt
+$ ./export.py input.mid output.axsd.txt
+```
+...then you load the `output` file into Godot, and point the `AXSDAudioStreamData` path to it.
+
+### Details
+This is a Python 3 script that handles exporting MIDI note data to AxolotlSD sequencer note data.
 
 - The first argument is an input MIDI file.
 - The second argument is the file to export to.
 
-## External links
-- [adsr]: https://en.wikipedia.org/wiki/ADSR_envelope
-- [slope]: https://en.wikipedia.org/wiki/Slope
-- [twelve-tet]: https://en.wikipedia.org/wiki/12_equal_temperament
+[adsr]: https://en.wikipedia.org/wiki/ADSR_envelope
+[slope]: https://en.wikipedia.org/wiki/Slope
+[twelve-tet]: https://en.wikipedia.org/wiki/12_equal_temperament
