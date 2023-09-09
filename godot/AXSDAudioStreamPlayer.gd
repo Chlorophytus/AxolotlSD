@@ -30,14 +30,6 @@ var ticks = 0.0
 var playback: AudioStreamPlaybackPolyphonic
 var poly_stream: AudioStreamPolyphonic
 
-enum ADSRState {
-	OFF,
-	ATTACK,
-	DECAY,
-	SUSTAIN,
-	RELEASE
-}
-
 class Voice:
 	class Assignment:
 		var pitch: float = 0.0
@@ -46,7 +38,7 @@ class Voice:
 		var key: bool = false
 		var amplitude: float = 0.0
 		var velocity: float = 0.0
-		var state: ADSRState = ADSRState.ATTACK
+		var seconds: float = 0.0
 
 
 	var profile: AXSDAudioWAVProfile = null
@@ -56,58 +48,38 @@ class Voice:
 		self.profile = vprofile
 
 	func tick(playback: AudioStreamPlaybackPolyphonic, delta: float):
+		# Loop through assignments
 		for i in range(self.assignments.size()):
+			# This assignment
 			var assignment = self.assignments[i]
+			
+			# Determine assignment hold seconds...
 			if assignment.key:
-				match assignment.state:
-					ADSRState.OFF:
-						print_debug("what, off state can't be encountered here")
-					ADSRState.ATTACK:
-						assignment.amplitude += self.profile.attack * delta
-						if assignment.amplitude > 1.0:
-							assignment.state = ADSRState.DECAY
-							assignment.amplitude = 1.0
-					ADSRState.DECAY:
-						assignment.amplitude -= self.profile.decay * delta
-						if assignment.amplitude < self.profile.sustain:
-							assignment.state = ADSRState.SUSTAIN
-							assignment.amplitude = self.profile.sustain
-					ADSRState.SUSTAIN:
-						assignment.amplitude = self.profile.sustain
-					ADSRState.RELEASE:
-						assignment.state = ADSRState.ATTACK
+				if assignment.seconds < self.profile.sustain_at:
+					assignment.seconds += delta
 			else:
-				match assignment.state:
-					ADSRState.OFF:
-						playback.stop_stream(assignment.id)
-					ADSRState.ATTACK:
-						assignment.amplitude -= self.profile.release * delta
-						if assignment.amplitude < 0.0:
-							playback.stop_stream(assignment.id)
-							assignment.state = ADSRState.OFF
-					ADSRState.DECAY:
-						assignment.amplitude -= self.profile.release * delta
-						if assignment.amplitude < 0.0:
-							playback.stop_stream(assignment.id)
-							assignment.state = ADSRState.OFF
-					ADSRState.SUSTAIN:
-						assignment.amplitude -= self.profile.release * delta
-						if assignment.amplitude < 0.0:
-							playback.stop_stream(assignment.id)
-							assignment.state = ADSRState.OFF
-					ADSRState.RELEASE:
-						assignment.amplitude -= self.profile.release * delta
-						if assignment.amplitude < 0.0:
-							playback.stop_stream(assignment.id)
-							assignment.state = ADSRState.OFF
-			assignment.vibrato_current_offset += delta * self.profile.vibrato_frequency * PI
-			assignment.vibrato_current_offset = fmod(assignment.vibrato_current_offset, TAU)
-			var decibels = linear_to_db(clamp(assignment.amplitude * assignment.velocity * profile.volume, 0.0, 1.0))
-			playback.set_stream_pitch_scale(assignment.id, assignment.pitch + (cos(assignment.vibrato_current_offset) * self.profile.vibrato_intensity))
-			playback.set_stream_volume(assignment.id, decibels)
+				assignment.seconds += delta
 
+			# ... then determine the amplitude based on the ADSR envelope
+			if assignment.seconds > self.profile.envelope.get_point_position(self.profile.envelope.get_point_count() - 1).x:
+				# Stop this stream, it's exceeded its envelope end
+				playback.stop_stream(assignment.id)
+				assignment.id = AudioStreamPlaybackPolyphonic.INVALID_ID
+			else:
+				# Continue this stream, it hasn't ended its envelope
+				assignment.amplitude = self.profile.envelope.sample(assignment.seconds)
+				# Handle vibrato
+				assignment.vibrato_current_offset += delta * self.profile.vibrato_frequency * PI
+				assignment.vibrato_current_offset = fmod(assignment.vibrato_current_offset, TAU)
+
+				# Handle final loudness and pitch
+				var decibels = linear_to_db(clamp(assignment.amplitude * assignment.velocity * profile.volume, 0.0, 1.0))
+				playback.set_stream_pitch_scale(assignment.id, assignment.pitch + (cos(assignment.vibrato_current_offset) * self.profile.vibrato_intensity))
+				playback.set_stream_volume(assignment.id, decibels)
+
+		# Remove all assignments that have released
 		self.assignments = self.assignments.filter(func(assign):
-			return assign.state != ADSRState.OFF
+			return assign.id != AudioStreamPlaybackPolyphonic.INVALID_ID
 		)
 
 	func on(playback: AudioStreamPlaybackPolyphonic, note: int, velocity: float):
@@ -167,7 +139,6 @@ func _process(delta):
 						if e.note in self.drum_mappings.keys():
 							var drum_id = self.drum_mappings[e.note]
 							self.voices[9].profile = self.drum_profiles[drum_id]
-
 							self.voices[9].on(self.playback, 69, e.velocity / 127.0)
 					else:
 						# Melody notes go to audio mappings
@@ -180,3 +151,6 @@ func _process(delta):
 			voice.tick(self.playback, delta)
 
 		ticks += delta
+	else:
+		_voices_panic()
+		

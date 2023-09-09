@@ -20,10 +20,8 @@ class_name AXSDAudioWAVProfile
 
 @export var data: AudioStreamWAV
 
-@export var attack: float = 1000.0
-@export var decay: float = 1000.0
-@export var sustain: float = 1.0
-@export var release: float = 1000.0
+@export var envelope: Curve
+@export var sustain_at: float
 
 @export var pitch_multiplier: float = 1.0
 @export var vibrato_frequency: float = 0.0

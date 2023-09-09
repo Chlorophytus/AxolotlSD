@@ -17,10 +17,8 @@ Each AXSDAudioWAVProfile is mapped to a MIDI channel. The sequencer exporter may
 
 #### Profile options
 - `data`: Godot Wave file data.
-- `attack`: [ADSR][adsr] attack in [rise-over-run][slope] format given the "run" is one second.
-- `decay`: [ADSR][adsr] decay in [rise-over-run][slope] format given the "run" is one second. You don't need to make it negative.
-- `sustain`: Normalized [ADSR][adsr] sustain.
-- `release`: [ADSR][adsr] release in [rise-over-run][slope] format given the "run" is one second. You don't need to make it negative.
+- `envelope`: [ADSR][adsr] envelope, Godot `Curve` format. Each point is in seconds.
+- `sustain_at`: The point in seconds where the [ADSR][adsr] envelope will hold until released.
 - `pitch_multiplier`: If a sample is too flat or sharp and setting the A440 doesn't help then use this to multiply the calculated pitch finely.
 - `vibrato_frequency`: Vibrato frequency in cycles per second.
 - `vibrato_intensity`: Vibrato intensity ratio into the calculated pitch. Set this to a very low number (like 0.005) when using vibrato.
@@ -45,5 +43,4 @@ This is a Python 3 script that handles exporting MIDI note data to AxolotlSD seq
 - The second argument is the file to export to.
 
 [adsr]: https://en.wikipedia.org/wiki/ADSR_envelope
-[slope]: https://en.wikipedia.org/wiki/Slope
 [twelve-tet]: https://en.wikipedia.org/wiki/12_equal_temperament
