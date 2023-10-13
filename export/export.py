@@ -18,14 +18,21 @@
 import mido
 import sys
 import struct
+import json
+import wave
 
-RATE = 60 # hertz
+RATE = 60  # hertz
 
 with open(sys.argv[2], 'wb') as writer:
     reader = mido.MidiFile(sys.argv[1])
     writer.write(b'AXSD')
-    writer.write(struct.pack('<BH', 0xFC, 0x0002))
+    writer.write(struct.pack('<BH', 0xFC, 0x0003))
     writer.write(struct.pack('<BI', 0xFD, RATE))
+
+    # TODO: 8-bit Sample playback
+    sample_data = json.load(open(sys.argv[3], 'r'))
+
+
     tempo = 500000.0
 
     # pitch bends affect all notes in a channel
@@ -45,29 +52,35 @@ with open(sys.argv[2], 'wb') as writer:
                         tempo = message.tempo
                         print(f"{time} -> tempo {tempo}")
                     case 'end_of_track':
-                        this_end = mido.tick2second(time, reader.ticks_per_beat, tempo)
-                        if end_of_track == None or this_end > end_of_track:
+                        this_end = mido.tick2second(
+                            time, reader.ticks_per_beat, tempo)
+                        if end_of_track is None or this_end > end_of_track:
                             end_of_track = this_end
-                    # case 'sequencer_specific':
-                        # print(f"You have sequencer-specific data at {real_time}s: {message.data}")
                     case _:
                         pass
             else:
                 # print(f"MIDI {time} {real_time}/{reader.length} {message}")
-                real_time = mido.tick2second(time, reader.ticks_per_beat, tempo)
+                real_time = mido.tick2second(
+                    time, reader.ticks_per_beat, tempo)
                 match message.type:
                     case 'note_on':
-                        writer.write(struct.pack('<BIBBB', 0x01, int(real_time * RATE), message.channel, message.note, message.velocity))
+                        writer.write(struct.pack('<BIBBB', 0x01, int(
+                            real_time * RATE), message.channel, message.note,
+                            message.velocity))
                     case 'note_off':
-                        writer.write(struct.pack('<BIB', 0x02, int(real_time * RATE), message.channel))
+                        writer.write(struct.pack('<BIB', 0x02, int(
+                            real_time * RATE), message.channel))
                     case 'pitchwheel':
-                        writer.write(struct.pack('<BIBi', 0x03, int(real_time * RATE), message.channel, message.pitch))
+                        writer.write(struct.pack('<BIBi', 0x03, int(
+                            real_time * RATE), message.channel, message.pitch))
                     case 'program_change':
-                        writer.write(struct.pack('<BIBB', 0x04, int(real_time * RATE), message.channel, message.program))
+                        writer.write(struct.pack('<BIBB', 0x04, int(
+                            real_time * RATE), message.channel,
+                            message.program))
                     case _:
                         pass
 
-    if end_of_track == None:
+    if end_of_track is None:
         end_of_track = mido.tick2second(time, reader.ticks_per_beat, tempo)
     writer.write(struct.pack('<BI', 0xFE, int(end_of_track * RATE)))
     print(f"ends at {end_of_track}")
