@@ -1,7 +1,25 @@
+// ============================================================================
+//   Copyright 2023 Roland Metivier <metivier.roland@chlorophyt.us>
+//
+//   Licensed under the Apache License, Version 2.0 (the "License");
+//   you may not use this file except in compliance with the License.
+//   You may obtain a copy of the License at
+//
+//       http://www.apache.org/licenses/LICENSE-2.0
+//
+//   Unless required by applicable law or agreed to in writing, software
+//   distributed under the License is distributed on an "AS IS" BASIS,
+//   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//   See the License for the specific language governing permissions and
+//   limitations under the License.
+// ============================================================================
+//   AxolotlSD for C++ source code
 #include "../include/axolotlsd.hpp"
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <stdexcept>
+#include <numbers>
 using namespace axolotlsd;
 
 constexpr static U32 MAGIC = 0x41585344; // "AXSD"
@@ -20,35 +38,125 @@ const static std::map<command_type, size_t> byte_sizes{
     {command_type::rate, sizeof(U32)},
     {command_type::end_of_track, sizeof(song_tick_t)}};
 
-player::player(U32 count, U32 freq, bool stereo) : voices{}, frequency{freq}, in_stereo{stereo} {
-  voices.resize(count);
-  std::for_each(voices.begin(), voices.end(), [](auto &&v) {
-    v = voice{.patch = 0, .velocity = 0.0f, .phase_add_by = 0.0f, .phase = 0.0f};
-  });
+static F32 calculate_12tet(U8 note) {
+  return std::pow(2.0f, std::pow(1.0f / 12.0f, note)) * 440.0f;
+}
+
+player::player(U32 count, U32 freq, bool stereo) : frequency{1.0f / freq}, in_stereo{stereo}, max_voices{count} {
 }
 
 void player::play(song &&next) {
   info = next.info;
 
-  polyphony_off = 0;
-  polyphony_on = 0;
-  rate_over_freq = static_cast<F32>(info.ticks_per_second) / static_cast<F32>(frequency);
+  last_cursor = 0;
+
+  std::for_each(channels.begin(), channels.end(), [](auto &&c){
+    c.patch = 0;
+    c.polyphony_off = 0;
+    c.polyphony_on = 0;
+    c.voices.clear();
+  });
+
+  // rate_over_freq = static_cast<F32>(info.ticks_per_second) / static_cast<F32>(frequency);
+  seconds_elapsed = 0.0f;
+  seconds_end = info.ticks_end / static_cast<F32>(info.ticks_per_second);
 
   if(info.version != CURRENT_VERSION) {
     throw std::runtime_error{"Version mismatch in wanted song"};
   }
 
   commands_cache.clear();
-  for(auto &&item : next.command_list) {
+  std::for_each(next.command_list.begin(), next.command_list.end(), [this](auto &&item) {
     commands_cache.insert({item->time, item});
-  }
+  });
 
   playback = true;
 }
 
-void player::tick(std::vector<S16> &audio) {
-  if(playback) {
+void voice_group::accumulate_into(F32 &l, F32 &r) {
+  std::for_each(voices.begin(), voices.end(), [&l, &r](auto &&v) {
+    // TODO: wavetable
+    l += std::sin(v.phase - std::numbers::pi) * v.velocity;
+    r += std::sin(v.phase - std::numbers::pi) * v.velocity;
 
+    v.phase += v.phase_add_by;
+    v.phase = std::fmod(v.phase, std::numbers::pi * 2.0f);
+  });
+}
+
+void player::handle_one(F32& l, F32 &r) {
+  const auto cursor = static_cast<U32>(std::floor(info.ticks_per_second * seconds_elapsed));
+
+  if(cursor > last_cursor) {
+    auto &&[cache_begin, cache_end] = commands_cache.equal_range(cursor);
+    std::for_each(cache_begin, cache_end, [this](auto &&epair){
+      auto &&[_, eweak] = epair;
+      auto &&e = eweak.lock();
+      switch(e->get_type()) {
+        case command_type::note_on: {
+          if(on_voices < max_voices) {
+            auto &&ptr = static_cast<command_note_on *>(e.get());
+            channels[ptr->channel].voices.emplace_back(ptr->velocity / 127.0f, calculate_12tet(ptr->note) / frequency);
+            on_voices++;
+          }
+          break;
+        }
+        case command_type::note_off: {
+          if(on_voices > 0) {
+            auto &&ptr = static_cast<command_note_off *>(e.get());
+            auto &&voices = channels[ptr->channel].voices;
+            voices.erase(voices.begin());
+            on_voices--;
+          }
+          break;
+        }
+        default: {
+          break;
+        }
+      }
+    });
+
+    last_cursor = cursor;
+  }
+
+  std::for_each(channels.begin(), channels.end(), [&l, &r](auto &&c) {
+    c.accumulate_into(l, r);
+  });
+}
+
+void player::tick(std::vector<F32> &audio) {
+  if(playback) {
+    const auto size = audio.size();
+    if(in_stereo) {
+      // Stereo
+      for (auto i = 0; i < size; i += 2) {
+        auto l = 0.0f;
+        auto r = 0.0f;
+
+        handle_one(l, r);
+
+        // Over here we don't need to normalize
+        audio[i + 0] = std::clamp(l / 16.0f, -1.0f, 1.0f);
+        audio[i + 1] = std::clamp(r / 16.0f, -1.0f, 1.0f);
+
+        seconds_elapsed += frequency;
+        seconds_elapsed = std::fmod(seconds_elapsed, seconds_end);
+      }
+    } else {
+      // Mono
+      for (auto i = 0; i < size; i += 1) {
+        auto l = 0.0f;
+        auto r = 0.0f;
+
+        handle_one(l, r);
+
+        // Normalize by dividing by 2
+        audio[i] = std::clamp((l + r) / 32.0f, -1.0f, 1.0f);
+
+        seconds_elapsed += frequency;
+        seconds_elapsed = std::fmod(seconds_elapsed, seconds_end);
+      }
+    }
   } else {
     std::for_each(audio.begin(), audio.end(), [](auto &&a) { a = 0; });
   }

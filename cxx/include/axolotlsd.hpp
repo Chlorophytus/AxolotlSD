@@ -1,5 +1,22 @@
+// ============================================================================
+//   Copyright 2023 Roland Metivier <metivier.roland@chlorophyt.us>
+//
+//   Licensed under the Apache License, Version 2.0 (the "License");
+//   you may not use this file except in compliance with the License.
+//   You may obtain a copy of the License at
+//
+//       http://www.apache.org/licenses/LICENSE-2.0
+//
+//   Unless required by applicable law or agreed to in writing, software
+//   distributed under the License is distributed on an "AS IS" BASIS,
+//   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//   See the License for the specific language governing permissions and
+//   limitations under the License.
+// ============================================================================
+//   AxolotlSD for C++ public header
 #pragma once
 #include "configuration.hpp"
+#include <array>
 #include <cstdint>
 #include <forward_list>
 #include <map>
@@ -78,13 +95,19 @@ struct command_end_of_track : command {
   virtual command_type get_type() { return command_type::end_of_track; }
 };
 // ============================================================================
-struct voice {
-  U8 patch;
+struct voice_single {
   F32 velocity;
   F32 phase_add_by;
-  F32 phase;
+  F32 phase = 0.0f;
+};
+struct voice_group {
+  U8 patch = 0;
+  U32 polyphony_on = 0;
+  U32 polyphony_off = 0;
 
-  void accumulate_into(std::vector<S16> &);
+  std::vector<voice_single> voices{};
+
+  void accumulate_into(F32 &, F32 &);
 };
 // ============================================================================
 struct song_info {
@@ -102,25 +125,27 @@ struct song {
 };
 
 struct player {
-  F32 rate_over_freq;
-  F32 seconds_elapsed;
-  U32 frequency;
+  F32 seconds_elapsed = 0.0f;
+  F32 seconds_end;
+  F32 frequency;
+  U32 max_voices;
+  U32 on_voices;
 
-  U32 polyphony_on = 0;
-  U32 polyphony_off = 0;
+  U32 last_cursor = 0;
 
   song_info info;
   bool in_stereo;
 
   explicit player(U32, U32, bool);
 
-  std::vector<voice> voices;
+  std::array<voice_group, 16> channels{};
   std::multimap<song_tick_t, std::weak_ptr<command>> commands_cache{};
 
   bool playback = false;
 
   void play(song &&);
   void pause();
-  void tick(std::vector<S16> &);
+  void tick(std::vector<F32> &);
+  void handle_one(F32 &, F32 &);
 };
 } // namespace axolotlsd

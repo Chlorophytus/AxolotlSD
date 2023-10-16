@@ -31,18 +31,20 @@ with open(sys.argv[2], 'wb') as writer:
     writer.write(struct.pack('<BH', 0xFC, 0x0003))
     writer.write(struct.pack('<BI', 0xFD, RATE))
 
-    sample_path = Path(sys.argv[3])
-    sample_json = json.load((sample_path / 'bank.json').open())
-    for patch, info in sample_json.iteritems():
-        with wave.open(sample_path / patch . 'wav') as w:
-            if w.getnchannels() > 1:
-                raise f"Bank patch sample '{patch}.wav' is not mono"
-            if w.getsampwidth() != 1:
-                raise f"Bank patch sample '{patch}.wav' is not 8-bit PCM"
+    # TODO: Implement samples
 
-            writer.write(struct.pack('<BBI', 0x80, patch, len(w)))
-            for frame in w:
-                writer.write(struct.pack('<B', frame))
+    # sample_path = Path(sys.argv[3])
+    # sample_json = json.load((sample_path / 'bank.json').open())
+    # for patch, info in sample_json.iteritems():
+    #     with wave.open(sample_path / patch . 'wav') as w:
+    #         if w.getnchannels() > 1:
+    #             raise f"Bank patch sample '{patch}.wav' is not mono"
+    #         if w.getsampwidth() != 1:
+    #             raise f"Bank patch sample '{patch}.wav' is not 8-bit PCM"
+    #
+    #         writer.write(struct.pack('<BBI', 0x80, patch, len(w)))
+    #         for frame in w:
+    #             writer.write(struct.pack('<B', frame))
 
     tempo = 500000.0
 
