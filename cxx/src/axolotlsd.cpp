@@ -16,8 +16,10 @@
 //   AxolotlSD for C++ source code
 #include "../include/axolotlsd.hpp"
 #include <algorithm>
+#include <axolotlsd.hpp>
 #include <bit>
 #include <cmath>
+#include <forward_list>
 #include <stdexcept>
 #include <numbers>
 using namespace axolotlsd;
@@ -39,15 +41,14 @@ const static std::map<command_type, size_t> byte_sizes{
     {command_type::end_of_track, sizeof(song_tick_t)}};
 
 static F32 calculate_12tet(U8 note) {
-  return std::pow(2.0f, std::pow(1.0f / 12.0f, note)) * 440.0f;
+  return std::pow(std::pow(2.0f, 1.0f / 12.0f), note - 69) * 440.0f;
 }
 
 player::player(U32 count, U32 freq, bool stereo) : frequency{1.0f / freq}, in_stereo{stereo}, max_voices{count} {
 }
 
 void player::play(song &&next) {
-  info = next.info;
-
+  std::swap(current, next);
   last_cursor = 0;
 
   std::for_each(channels.begin(), channels.end(), [](auto &&c){
@@ -57,18 +58,12 @@ void player::play(song &&next) {
     c.voices.clear();
   });
 
-  // rate_over_freq = static_cast<F32>(info.ticks_per_second) / static_cast<F32>(frequency);
   seconds_elapsed = 0.0f;
-  seconds_end = info.ticks_end / static_cast<F32>(info.ticks_per_second);
+  seconds_end = current.ticks_end / static_cast<F32>(current.ticks_per_second);
 
-  if(info.version != CURRENT_VERSION) {
+  if(current.version != CURRENT_VERSION) {
     throw std::runtime_error{"Version mismatch in wanted song"};
   }
-
-  commands_cache.clear();
-  std::for_each(next.command_list.begin(), next.command_list.end(), [this](auto &&item) {
-    commands_cache.insert({item->time, item});
-  });
 
   playback = true;
 }
@@ -85,18 +80,18 @@ void voice_group::accumulate_into(F32 &l, F32 &r) {
 }
 
 void player::handle_one(F32& l, F32 &r) {
-  const auto cursor = static_cast<U32>(std::floor(info.ticks_per_second * seconds_elapsed));
+  const auto cursor = static_cast<U32>(std::floor(current.ticks_per_second * seconds_elapsed));
 
   if(cursor > last_cursor) {
-    auto &&[cache_begin, cache_end] = commands_cache.equal_range(cursor);
-    std::for_each(cache_begin, cache_end, [this](auto &&epair){
-      auto &&[_, eweak] = epair;
-      auto &&e = eweak.lock();
+    auto [begin, end] = current.commands.equal_range(cursor);
+    std::for_each(begin, end, [this](auto &&epair){
+      auto &&[_, e] = epair;
       switch(e->get_type()) {
         case command_type::note_on: {
           if(on_voices < max_voices) {
             auto &&ptr = static_cast<command_note_on *>(e.get());
-            channels[ptr->channel].voices.emplace_back(ptr->velocity / 127.0f, calculate_12tet(ptr->note) / frequency);
+            auto phase = calculate_12tet(ptr->note) * (frequency * std::numbers::pi);
+            channels[ptr->channel].voices.emplace_back(ptr->velocity / 127.0f, phase);
             on_voices++;
           }
           break;
@@ -135,11 +130,13 @@ void player::tick(std::vector<F32> &audio) {
 
         handle_one(l, r);
 
-        // Over here we don't need to normalize
-        audio[i + 0] = std::clamp(l / 16.0f, -1.0f, 1.0f);
-        audio[i + 1] = std::clamp(r / 16.0f, -1.0f, 1.0f);
+        audio[i + 0] = std::clamp(l / 4.0f, -1.0f, 1.0f);
+        audio[i + 1] = std::clamp(r / 4.0f, -1.0f, 1.0f);
 
         seconds_elapsed += frequency;
+        if(seconds_elapsed > seconds_end) {
+          last_cursor = 0;
+        }
         seconds_elapsed = std::fmod(seconds_elapsed, seconds_end);
       }
     } else {
@@ -150,10 +147,12 @@ void player::tick(std::vector<F32> &audio) {
 
         handle_one(l, r);
 
-        // Normalize by dividing by 2
-        audio[i] = std::clamp((l + r) / 32.0f, -1.0f, 1.0f);
+        audio[i] = std::clamp((l + r) / 8.0f, -1.0f, 1.0f);
 
         seconds_elapsed += frequency;
+        if(seconds_elapsed > seconds_end) {
+          last_cursor = 0;
+        }
         seconds_elapsed = std::fmod(seconds_elapsed, seconds_end);
       }
     }
@@ -162,228 +161,220 @@ void player::tick(std::vector<F32> &audio) {
   }
 }
 
-song song::load(std::vector<U8> &&data) {
-  auto where = 0;
+song song::load(std::vector<U8> &data) {
+  auto where = 4;
   auto end = data.size();
   auto &&the_song = song{};
   auto continue_for = 0;
   auto continue_data = std::forward_list<U8>{};
 
   auto magic_data = std::vector<U32>{data[0], data[1], data[2], data[3]};
-  auto magic_concat = (magic_data[0] << 0) | (magic_data[1] << 8) |
-                      (magic_data[2] << 15) | (magic_data[3] << 24);
+  auto magic_concat = (magic_data[3] << 0) | (magic_data[2] << 8) |
+                      (magic_data[1] << 16) | (magic_data[0] << 24);
 
   if (magic_concat != MAGIC) {
     throw std::runtime_error{"First 4 bytes of this song are not 'AXSD'!"};
   }
 
-  for (where = 4; where < end; where++) {
-    auto &&data_byte = data.at(where);
-    if (continue_for > 0) {
+  auto data_byte = 0;
+
+  while(where < end) {
+    data_byte = data.at(where);
+
+    auto what_value = static_cast<command_type>(data_byte);
+    continue_for = byte_sizes.at(what_value);
+
+    while (continue_for > 0) {
+      where++;
+      data_byte = data.at(where);
       continue_data.emplace_front(data_byte);
       continue_for--;
-
-      continue;
-    } else {
-      continue_data.reverse();
-      auto what_value = static_cast<command_type>(data_byte);
-
-      auto &&raw_ptr = std::shared_ptr<command>{};
-      switch (what_value) {
-      case command_type::patch_data: {
-        // initialize pointer
-        auto &&command_ptr = new command_patch_data{};
-
-        // initialize bytes
-        command_ptr->patch = continue_data.front();
-        continue_data.pop_front();
-
-        // get sample size
-        auto width = std::vector<U32>{0, 0, 0, 0};
-        std::for_each(width.begin(), width.end(), [&continue_data](auto &&w) {
-          w = continue_data.front();
-          continue_data.pop_front();
-        });
-        command_ptr->bytes.reset(new patch_t{});
-        auto width_calc = (width[0] << 0) | (width[1] << 8) | (width[2] << 15) |
-                          (width[3] << 24);
-        command_ptr->bytes->resize(width_calc);
-
-        // sample is loaded here
-        std::for_each(command_ptr->bytes->begin(), command_ptr->bytes->end(),
-                      [&data, &where](auto &&b) { b = data.at(++where); });
-        the_song.patch_map[command_ptr->patch] = command_ptr->bytes;
-
-        // dispatch pointer
-        raw_ptr.reset(command_ptr);
-        break;
-      }
-
-      case command_type::note_on: {
-        // initialize pointer
-        auto &&command_ptr = new command_note_on{};
-
-        // initialize time
-        auto time = std::vector<song_tick_t>{0, 0, 0, 0};
-        std::for_each(time.begin(), time.end(), [&continue_data](auto &&t) {
-          t = continue_data.front();
-          continue_data.pop_front();
-        });
-        command_ptr->time =
-            (time[0] << 0) | (time[1] << 8) | (time[2] << 15) | (time[3] << 24);
-
-        // initialize bytes
-        command_ptr->channel = continue_data.front();
-        continue_data.pop_front();
-        command_ptr->note = continue_data.front();
-        continue_data.pop_front();
-        command_ptr->velocity = continue_data.front();
-        continue_data.pop_front();
-
-        // dispatch pointer
-        raw_ptr.reset(command_ptr);
-        break;
-      }
-      case command_type::note_off: {
-        // initialize pointer
-        auto &&command_ptr = new command_note_off{};
-
-        // initialize time
-        auto &&time = std::vector<song_tick_t>{0, 0, 0, 0};
-        std::for_each(time.begin(), time.end(), [&continue_data](auto &&t) {
-          t = continue_data.front();
-          continue_data.pop_front();
-        });
-        command_ptr->time =
-            (time[0] << 0) | (time[1] << 8) | (time[2] << 15) | (time[3] << 24);
-
-        // initialize bytes
-        command_ptr->channel = continue_data.front();
-        continue_data.pop_front();
-
-        // dispatch pointer
-        raw_ptr.reset(command_ptr);
-        break;
-      }
-      case command_type::pitchwheel: {
-        // initialize pointer
-        auto &&command_ptr = new command_pitchwheel{};
-
-        // initialize time
-        auto &&time = std::vector<song_tick_t>{0, 0, 0, 0};
-        std::for_each(time.begin(), time.end(), [&continue_data](auto &&t) {
-          t = continue_data.front();
-          continue_data.pop_front();
-        });
-        command_ptr->time =
-            (time[0] << 0) | (time[1] << 8) | (time[2] << 15) | (time[3] << 24);
-
-        // initialize bytes
-        command_ptr->channel = continue_data.front();
-        continue_data.pop_front();
-
-        // initialize bend
-        auto &&bend_vec = std::vector<U32>{0, 0, 0, 0};
-        std::for_each(bend_vec.begin(), bend_vec.end(),
-                      [&continue_data](auto &&b) {
-                        b = continue_data.front();
-                        continue_data.pop_front();
-                      });
-        auto bend = (bend_vec[0] << 0) | (bend_vec[1] << 8) |
-                    (bend_vec[2] << 15) | (bend_vec[3] << 24);
-        // bit cast to signed
-        command_ptr->bend = std::bit_cast<S32>(bend);
-
-        // dispatch pointer
-        raw_ptr.reset(command_ptr);
-        break;
-      }
-      case command_type::program_change: {
-        // initialize pointer
-        auto &&command_ptr = new command_program_change{};
-
-        // initialize time
-        auto &&time = std::vector<song_tick_t>{0, 0, 0, 0};
-        std::for_each(time.begin(), time.end(), [&continue_data](auto &&t) {
-          t = continue_data.front();
-          continue_data.pop_front();
-        });
-        command_ptr->time =
-            (time[0] << 0) | (time[1] << 8) | (time[2] << 15) | (time[3] << 24);
-
-        // initialize bytes
-        command_ptr->channel = continue_data.front();
-        continue_data.pop_front();
-        command_ptr->program = continue_data.front();
-        continue_data.pop_front();
-
-        // dispatch pointer
-        raw_ptr.reset(command_ptr);
-        break;
-      }
-      case command_type::version: {
-        // initialize pointer
-        auto &&command_ptr = new command_version{};
-
-        // initialize version
-        auto &&ver = std::vector<U16>{0, 0};
-        std::for_each(ver.begin(), ver.end(), [&continue_data](auto &&v) {
-          v = continue_data.front();
-          continue_data.pop_front();
-        });
-        command_ptr->song_version = (ver[0] << 0) | (ver[1] << 8);
-
-        // dispatch pointer
-        raw_ptr.reset(command_ptr);
-
-        the_song.info.version = command_ptr->song_version;
-        break;
-      }
-      case command_type::rate: {
-        // initialize pointer
-        auto &&command_ptr = new command_rate{};
-
-        // initialize version
-        auto &&rate = std::vector<U32>{0, 0, 0, 0};
-        std::for_each(rate.begin(), rate.end(), [&continue_data](auto &&r) {
-          r = continue_data.front();
-          continue_data.pop_front();
-        });
-        command_ptr->song_rate =
-            (rate[0] << 0) | (rate[1] << 8) | (rate[2] << 15) | (rate[3] << 24);
-
-        // dispatch pointer
-        raw_ptr.reset(command_ptr);
-
-        the_song.info.ticks_per_second = command_ptr->song_rate;
-        break;
-      }
-      case command_type::end_of_track: {
-        // initialize pointer
-        auto &&command_ptr = new command_end_of_track{};
-
-        // initialize version
-        auto &&end = std::vector<song_tick_t>{0, 0, 0, 0};
-        std::for_each(end.begin(), end.end(), [&continue_data](auto &&e) {
-          e = continue_data.front();
-          continue_data.pop_front();
-        });
-        command_ptr->time =
-            (end[0] << 0) | (end[1] << 8) | (end[2] << 15) | (end[3] << 24);
-
-        // dispatch pointer
-        raw_ptr.reset(command_ptr);
-
-        the_song.info.ticks_end = command_ptr->time;
-        break;
-      }
-      }
-
-      continue_for = byte_sizes.at(what_value);
-      the_song.command_list.emplace_front(std::move(raw_ptr));
     }
+    continue_data.reverse();
+
+
+
+    switch (what_value) {
+    case command_type::patch_data: {
+      // initialize pointer
+      auto &&command_ptr = new command_patch_data{};
+
+      // initialize bytes
+      auto patch = continue_data.front();
+      continue_data.pop_front();
+
+      // get sample size
+      auto width = std::vector<U32>{0, 0, 0, 0};
+      std::for_each(width.begin(), width.end(), [&continue_data](auto &&w) {
+        w = continue_data.front();
+        continue_data.pop_front();
+      });
+      auto patch_bytes = patch_t{};
+      auto width_calc = (width[0] << 0) | (width[1] << 8) | (width[2] << 16) |
+                        (width[3] << 24);
+      patch_bytes.resize(width_calc);
+
+      // sample is loaded here
+      std::for_each(patch_bytes.begin(), patch_bytes.end(),
+                    [&data, &where](auto &&b) { b = data.at(++where); });
+      the_song.patches.insert({patch, patch_bytes});
+
+      // dispatch pointer
+      the_song.commands.emplace(0, command_ptr);
+      break;
+    }
+
+    case command_type::note_on: {
+      // initialize pointer
+      auto &&command_ptr = new command_note_on{};
+
+      // initialize time
+      auto time = std::vector<song_tick_t>{0, 0, 0, 0};
+      std::for_each(time.begin(), time.end(), [&continue_data](auto &&t) {
+        t = continue_data.front();
+        continue_data.pop_front();
+      });
+
+      // initialize bytes
+      command_ptr->channel = continue_data.front();
+      continue_data.pop_front();
+      command_ptr->note = continue_data.front();
+      continue_data.pop_front();
+      command_ptr->velocity = continue_data.front();
+      continue_data.pop_front();
+
+      // dispatch pointer
+      the_song.commands.emplace((time[0] << 0) | (time[1] << 8) | (time[2] << 16) | (time[3] << 24), command_ptr);
+      break;
+    }
+    case command_type::note_off: {
+      // initialize pointer
+      auto &&command_ptr = new command_note_off{};
+
+      // initialize time
+      auto &&time = std::vector<song_tick_t>{0, 0, 0, 0};
+      std::for_each(time.begin(), time.end(), [&continue_data](auto &&t) {
+        t = continue_data.front();
+        continue_data.pop_front();
+      });
+
+      // initialize bytes
+      command_ptr->channel = continue_data.front();
+      continue_data.pop_front();
+
+      // dispatch pointer
+      the_song.commands.emplace((time[0] << 0) | (time[1] << 8) | (time[2] << 16) | (time[3] << 24), command_ptr);
+      break;
+    }
+    case command_type::pitchwheel: {
+      // initialize pointer
+      auto &&command_ptr = new command_pitchwheel{};
+
+      // initialize time
+      auto &&time = std::vector<song_tick_t>{0, 0, 0, 0};
+      std::for_each(time.begin(), time.end(), [&continue_data](auto &&t) {
+        t = continue_data.front();
+        continue_data.pop_front();
+      });
+
+      // initialize bytes
+      command_ptr->channel = continue_data.front();
+      continue_data.pop_front();
+
+      // initialize bend
+      auto &&bend_vec = std::vector<U32>{0, 0, 0, 0};
+      std::for_each(bend_vec.begin(), bend_vec.end(),
+                    [&continue_data](auto &&b) {
+                      b = continue_data.front();
+                      continue_data.pop_front();
+                    });
+      auto bend = (bend_vec[0] << 0) | (bend_vec[1] << 8) |
+                  (bend_vec[2] << 16) | (bend_vec[3] << 24);
+      // bit cast to signed
+      command_ptr->bend = std::bit_cast<S32>(bend);
+
+      // dispatch pointer
+      the_song.commands.emplace((time[0] << 0) | (time[1] << 8) | (time[2] << 16) | (time[3] << 24), command_ptr);
+      break;
+    }
+    case command_type::program_change: {
+      // initialize pointer
+      auto &&command_ptr = new command_program_change{};
+
+      // initialize time
+      auto &&time = std::vector<song_tick_t>{0, 0, 0, 0};
+      std::for_each(time.begin(), time.end(), [&continue_data](auto &&t) {
+        t = continue_data.front();
+        continue_data.pop_front();
+      });
+
+      // initialize bytes
+      command_ptr->channel = continue_data.front();
+      continue_data.pop_front();
+      command_ptr->program = continue_data.front();
+      continue_data.pop_front();
+
+      // dispatch pointer
+      the_song.commands.emplace((time[0] << 0) | (time[1] << 8) | (time[2] << 16) | (time[3] << 24), command_ptr);
+      break;
+    }
+    case command_type::version: {
+      // initialize pointer
+      auto &&command_ptr = new command_version{};
+
+      // initialize version
+      auto &&ver = std::vector<U16>{0, 0};
+      std::for_each(ver.begin(), ver.end(), [&continue_data](auto &&v) {
+        v = continue_data.front();
+        continue_data.pop_front();
+      });
+      command_ptr->song_version = (ver[0] << 0) | (ver[1] << 8);
+
+      the_song.version = command_ptr->song_version;
+
+      // dispatch pointer
+      the_song.commands.emplace(0, command_ptr);
+      break;
+    }
+    case command_type::rate: {
+      // initialize pointer
+      auto &&command_ptr = new command_rate{};
+
+      // initialize version
+      auto &&rate = std::vector<U32>{0, 0, 0, 0};
+      std::for_each(rate.begin(), rate.end(), [&continue_data](auto &&r) {
+        r = continue_data.front();
+        continue_data.pop_front();
+      });
+      command_ptr->song_rate =
+          (rate[0] << 0) | (rate[1] << 8) | (rate[2] << 16) | (rate[3] << 24);
+
+      the_song.ticks_per_second = command_ptr->song_rate;
+
+      // dispatch pointer
+      the_song.commands.emplace(0, command_ptr);
+      break;
+    }
+    case command_type::end_of_track: {
+      // initialize pointer
+      auto &&command_ptr = new command_end_of_track{};
+
+      // initialize version
+      auto &&time = std::vector<song_tick_t>{0, 0, 0, 0};
+      std::for_each(time.begin(), time.end(), [&continue_data](auto &&e) {
+        e = continue_data.front();
+        continue_data.pop_front();
+      });
+
+      // dispatch pointer
+      the_song.commands.emplace(the_song.ticks_end, command_ptr);
+
+      the_song.ticks_end = (time[0] << 0) | (time[1] << 8) | (time[2] << 16) | (time[3] << 24);
+      break;
+    }
+    }
+    where++;
   }
-  the_song.command_list.reverse();
 
   return the_song;
 }

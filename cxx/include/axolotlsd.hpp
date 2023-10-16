@@ -15,10 +15,9 @@
 // ============================================================================
 //   AxolotlSD for C++ public header
 #pragma once
-#include "configuration.hpp"
+#include "axolotlsd_configuration.hpp"
 #include <array>
 #include <cstdint>
-#include <forward_list>
 #include <map>
 #include <memory>
 #include <vector>
@@ -52,10 +51,9 @@ enum class command_type : U8 {
   // meta
   version = 0xFC,
   rate = 0xFD,
-  end_of_track = 0xFE
+  end_of_track = 0xFE,
 };
 struct command {
-  song_tick_t time = 0;
   virtual command_type get_type() = 0;
 };
 struct command_note_on : command {
@@ -80,8 +78,6 @@ struct command_program_change : command {
 };
 struct command_patch_data : command {
   virtual command_type get_type() { return command_type::patch_data; }
-  U8 patch;
-  std::shared_ptr<patch_t> bytes;
 };
 struct command_version : command {
   virtual command_type get_type() { return command_type::version; }
@@ -110,18 +106,15 @@ struct voice_group {
   void accumulate_into(F32 &, F32 &);
 };
 // ============================================================================
-struct song_info {
+struct song {
   U16 version;
   song_tick_t ticks_end;
   song_tick_t ticks_per_second;
-};
-struct song {
-  std::forward_list<std::shared_ptr<command>> command_list{};
-  std::map<U8, std::weak_ptr<patch_t>> patch_map{};
 
-  song_info info;
+  std::multimap<song_tick_t, std::unique_ptr<command>> commands{};
+  std::map<U8, patch_t> patches{};
 
-  static song load(std::vector<U8> &&);
+  static song load(std::vector<U8> &);
 };
 
 struct player {
@@ -133,13 +126,12 @@ struct player {
 
   U32 last_cursor = 0;
 
-  song_info info;
+  song current;
   bool in_stereo;
 
   explicit player(U32, U32, bool);
 
   std::array<voice_group, 16> channels{};
-  std::multimap<song_tick_t, std::weak_ptr<command>> commands_cache{};
 
   bool playback = false;
 

@@ -24,8 +24,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 project(axolotlsd VERSION 0.4.0.1)
 
 # Configure the project header
-configure_file(include/configuration.txt
-    ${PROJECT_SOURCE_DIR}/include/configuration.hpp)
+configure_file(include/${PROJECT_NAME}_configuration.txt
+    ${PROJECT_SOURCE_DIR}/include/${PROJECT_NAME}_configuration.hpp)
 
 # Build our main library
 add_library(${PROJECT_NAME}_s STATIC src/axolotlsd.cpp)
@@ -42,11 +42,11 @@ set_target_properties(${PROJECT_NAME}
     PROPERTIES
     VERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}
     SOVERSION 0
-    PUBLIC_HEADER include/axolotlsd.hpp)
+    PUBLIC_HEADER "include/${PROJECT_NAME}.hpp;include/${PROJECT_NAME}_configuration.hpp")
 set_target_properties(${PROJECT_NAME}_s
     PROPERTIES
     VERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}
-    PUBLIC_HEADER include/axolotlsd.hpp)
+    PUBLIC_HEADER "include/${PROJECT_NAME}.hpp;include/${PROJECT_NAME}_configuration.hpp")
 
 # Finally link
 target_link_libraries(${PROJECT_NAME})

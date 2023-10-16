@@ -100,7 +100,7 @@ CTestTestfile.cmake
 _deps
 
 ### Vendor
-axolotlsd_configuration.hpp
+configuration.hpp
 CPack*
 build
 
@@ -110,3 +110,4 @@ build
 # Clangd cache
 .cache
 
+*.axsd
