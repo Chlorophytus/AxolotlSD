@@ -38,7 +38,7 @@ using F64 = double;
 
 using audio_data_t = F32;
 using song_tick_t = U32;
-using patch_t = std::vector<U8>;
+using patch_data_t = std::vector<U8>;
 // ============================================================================
 enum class command_type : U8 {
   // regular
@@ -94,16 +94,25 @@ struct command_end_of_track : command {
 struct voice_single {
   F32 velocity;
   F32 phase_add_by;
+	U8 note;
   F32 phase = 0.0f;
 };
 struct voice_group {
   U8 patch = 0;
   U32 polyphony_on = 0;
   U32 polyphony_off = 0;
+	F32 bend = 1.0f;
 
   std::vector<voice_single> voices{};
 
   void accumulate_into(F32 &, F32 &);
+};
+// ============================================================================
+struct patch_t {
+	patch_data_t waveform{};
+	U32 loop_start;
+	U32 loop_end;
+	F32 ratio;
 };
 // ============================================================================
 struct song {
