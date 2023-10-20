@@ -48,9 +48,7 @@ int main(int argc, char **argv) {
   while((ch = std::fgetc(reader)) != EOF) {
     auto byte = static_cast<axolotlsd::U8>(ch);
     song_bytes.emplace_back(byte);
-    std::fprintf(stderr, "%02hhx ", byte);
   }
-  std::fprintf(stderr, "\n");
   player = std::make_unique<axolotlsd::player>(32, 44100, true);
   player->play(axolotlsd::song::load(song_bytes));
 

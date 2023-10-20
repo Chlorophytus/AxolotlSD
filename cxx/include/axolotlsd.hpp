@@ -91,29 +91,31 @@ struct command_end_of_track : command {
   virtual command_type get_type() { return command_type::end_of_track; }
 };
 // ============================================================================
-struct voice_single {
-  F32 velocity;
-  F32 phase_add_by;
-	U8 note;
-  F32 phase = 0.0f;
-};
-struct voice_group {
-  U8 patch = 0;
-  U32 polyphony_on = 0;
-  U32 polyphony_off = 0;
-	F32 bend = 1.0f;
-
-  std::vector<voice_single> voices{};
-
-  void accumulate_into(F32 &, F32 &);
-};
-// ============================================================================
 struct patch_t {
 	patch_data_t waveform{};
 	U32 loop_start;
 	U32 loop_end;
 	F32 ratio;
 };
+// ============================================================================
+struct voice_single {
+  F32 velocity;
+  F32 phase_add_by;
+	U8 note;
+  F32 phase = 0.0f;
+	bool key = true;
+	bool active = true;
+};
+struct voice_group {
+  U32 polyphony_on = 0;
+  U32 polyphony_off = 0;
+	F32 bend = 0.0f;
+
+  std::vector<voice_single> voices{};
+
+  void accumulate_into(const patch_t &, F32 &, F32 &);
+};
+
 // ============================================================================
 struct song {
   U16 version;
@@ -131,7 +133,7 @@ struct player {
   F32 seconds_end;
   F32 frequency;
   U32 max_voices;
-  U32 on_voices;
+  U32 on_voices = 0;
 
   U32 last_cursor = 0;
 
@@ -141,6 +143,7 @@ struct player {
   explicit player(U32, U32, bool);
 
   std::array<voice_group, 16> channels{};
+  std::array<U8, 16> patch_ids{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
   bool playback = false;
 

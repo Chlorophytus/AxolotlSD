@@ -24,7 +24,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(GRAPHICS GRAPHICS_API_OPENGL_43)
 
 # Project instantiation
-project(axolotlsd_test VERSION 0.1.0.1)
+project(axolotlsd_test VERSION 0.1.0.2)
+
+# Find AxolotlSD
+include(FindPkgConfig)
+pkg_check_modules(AxolotlSD REQUIRED axolotlsd)
 
 # Add raylib
 add_subdirectory(raylib)
@@ -45,4 +49,4 @@ set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 20)
 target_include_directories(${PROJECT_NAME} PRIVATE include raylib/src)
 
 # Finally link
-target_link_libraries(${PROJECT_NAME} raylib axolotlsd)
+target_link_libraries(${PROJECT_NAME} raylib ${AxolotlSD_LIBRARIES})
