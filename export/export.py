@@ -33,19 +33,35 @@ with open(sys.argv[2], 'wb') as writer:
 
     sample_path = Path(sys.argv[3])
     sample_json = json.load((sample_path / 'bank.json').open())
-    for patch, info in sample_json.items():
-        with wave.open(str(sample_path / f"{patch}.wav")) as w:
+
+    print("Handling drum bank...")
+    for drum, info in sample_json["drums"].items():
+        with wave.open(str(sample_path / "drums" / f"{drum}.wav")) as w:
+            if w.getnchannels() > 1:
+                raise f"Bank drum sample '{drum}.wav' is not mono"
+            if w.getsampwidth() != 1:
+                raise f"Bank drum sample '{drum}.wav' is not 8-bit PCM"
+            frame_count = w.getnframes()
+            writer.write(
+                struct.pack('<BBIff', 0x81, int(drum), frame_count,
+                            float(info["pitch"]), float(info["gain"])))
+            for frame in w.readframes(frame_count):
+                writer.write(struct.pack('<B', frame))
+            print(f"{drum}: {frame_count}")
+
+    print("Handling patch bank...")
+    for patch, info in sample_json["patches"].items():
+        with wave.open(str(sample_path / "patches" / f"{patch}.wav")) as w:
             if w.getnchannels() > 1:
                 raise f"Bank patch sample '{patch}.wav' is not mono"
             if w.getsampwidth() != 1:
                 raise f"Bank patch sample '{patch}.wav' is not 8-bit PCM"
 
-            # Dealing with 8-bit mono it should always be 1 byte per frame?
             frame_count = w.getnframes()
             writer.write(
-                struct.pack('<BBIIIf', 0x80, int(patch), frame_count,
+                struct.pack('<BBIIIff', 0x80, int(patch), frame_count,
                             int(info["start"]), int(info["end"]),
-                            float(info["pitch"])))
+                            float(info["pitch"]), float(info["gain"])))
             for frame in w.readframes(frame_count):
                 writer.write(struct.pack('<B', frame))
             print(f"{patch}: loop {info['start']}-{info['end']} {frame_count}")

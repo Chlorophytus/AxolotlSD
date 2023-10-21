@@ -35,8 +35,9 @@ const static std::map<command_type, size_t> byte_sizes{
      sizeof(song_tick_t) + (sizeof(U8) * 1) + sizeof(U16)},
     {command_type::program_change, sizeof(song_tick_t) + (sizeof(U8) * 2)},
 
-    {command_type::patch_data,
-     sizeof(U8) + sizeof(U32) + sizeof(U32) + sizeof(U32) + sizeof(F32)},
+    {command_type::patch_data, sizeof(U8) + sizeof(U32) + sizeof(U32) +
+                                   sizeof(U32) + sizeof(F32) + sizeof(F32)},
+    {command_type::drum_data, sizeof(U8) + sizeof(U32) + sizeof(F32) + sizeof(F32)},
 
     {command_type::version, sizeof(U16)},
     {command_type::rate, sizeof(U32)},
@@ -52,13 +53,21 @@ player::player(U32 count, U32 freq, bool stereo)
 void player::play(song &&next) {
   std::swap(current, next);
 
-  std::for_each(channels.begin(), channels.end(), [](auto &&c) {
-    c.polyphony_off = 0;
-    c.polyphony_on = 0;
-    c.bend = 0.0f;
-    c.voices.clear();
-  });
-  std::for_each(patch_ids.begin(), patch_ids.end(), [](auto &&p) { p = 0; });
+  for (auto i = 0; i < 16; i++) {
+    switch (i) {
+    case 9: {
+      channels[9].reset(new drum_group);
+      break;
+    }
+    default: {
+      channels[i].reset(new voice_group);
+      break;
+    }
+    }
+  }
+
+  std::for_each(patch_ids.begin(), patch_ids.end(),
+                [](auto &&p) { p = std::nullopt; });
 
   seconds_elapsed = 0.0f;
   seconds_end = current.ticks_end / static_cast<F32>(current.ticks_per_second);
@@ -68,42 +77,64 @@ void player::play(song &&next) {
   }
 
   on_voices = 0;
-  last_cursor = 0;
+  cursor = 0;
+  last_cursor = std::nullopt;
   playback = true;
 }
 
 void voice_group::accumulate_into(const patch_t &patch, F32 &l, F32 &r) {
   std::for_each(voices.begin(), voices.end(), [&patch, &l, &r](auto &&v) {
     auto sample = 0.0f;
-    auto here = static_cast<U32>(patch.ratio * v.phase);
+    auto here = static_cast<U32>(std::floor(patch.ratio * v.phase));
     const auto can_loop = patch.loop_start != 0xFFFFFFFF;
 
+    if (can_loop && (here > patch.loop_end)) {
+      if (v.key) {
+        here -= patch.loop_start;
+        here %= patch.loop_end - patch.loop_start;
+        here += patch.loop_start;
+      }
+    }
     if (here >= patch.waveform.size()) {
       v.active = false;
     } else {
       sample = (static_cast<F32>(patch.waveform.at(here)) - 128.0f) / 128.0f;
-		}
-		if (can_loop && (here > patch.loop_end)) {
-      if (v.key) {
-        here -= patch.loop_end;
-				here %= (patch.loop_end - patch.loop_start);
-				here += patch.loop_start;
-			}	
+    }
+    v.phase += v.phase_add_by;
+
+    l += sample * v.velocity * patch.gain;
+    r += sample * v.velocity * patch.gain;
+  });
+}
+
+void drum_group::accumulate_into(const drum_map_t &mapping, F32 &l, F32 &r) {
+  std::for_each(voices.begin(), voices.end(), [&mapping, &l, &r](auto &&d) {
+    auto sample = 0.0f;
+    auto &&map_found = mapping.find(d.note);
+    auto gain = 0.0f;
+
+    if (map_found != mapping.end()) {
+      auto &&[_, patch] = *map_found;
+      auto here = static_cast<U32>(patch.ratio * d.phase);
+      if (here >= patch.waveform.size()) {
+        d.active = false;
+      } else {
+        sample = (static_cast<F32>(patch.waveform.at(here)) - 128.0f) / 128.0f;
+      }
+      gain = patch.gain;
+      d.phase += d.phase_add_by;
+    } else {
+      d.active = false;
     }
 
-		// TODO: How do we determine this? (16.0f)
-    v.phase += v.phase_add_by * 32.0f;
-
-    l += sample * v.velocity;
-    r += sample * v.velocity;
+    l += sample * d.velocity * gain;
+    r += sample * d.velocity * gain;
   });
 }
 
 void player::handle_one(F32 &l, F32 &r) {
-  const auto cursor =
-      static_cast<U32>(std::floor(current.ticks_per_second * seconds_elapsed));
-
-  if (cursor > last_cursor) {
+  cursor = static_cast<U32>(current.ticks_per_second * seconds_elapsed);
+  if ((!last_cursor.has_value()) || (cursor > last_cursor.value())) {
     auto [begin, end] = current.commands.equal_range(cursor);
     std::for_each(begin, end, [this](auto &&epair) {
       auto &&[_, e] = epair;
@@ -112,16 +143,24 @@ void player::handle_one(F32 &l, F32 &r) {
         if (on_voices < max_voices) {
           auto &&ptr = static_cast<command_note_on *>(e.get());
           auto &&ch = channels[ptr->channel];
-          auto phase = calculate_12tet(ptr->note, ch.bend) *
-                       (frequency * std::numbers::pi);
-          ch.voices.emplace_back(ptr->velocity / 127.0f, phase, ptr->note);
-          on_voices++;
+          if (ch->is_drum_kit()) {
+            auto &&ch_casted = static_cast<drum_group *>(ch.get());
+            auto phase = A440 * frequency * 32.0f * std::numbers::pi;
+            ch_casted->voices.emplace_back(ptr->velocity / 127.0f, phase,
+                                           ptr->note);
+          } else {
+            auto &&ch_casted = static_cast<voice_group *>(ch.get());
+            auto phase = calculate_12tet(ptr->note, ch_casted->bend) *
+                         frequency * 32.0f * std::numbers::pi;
+            ch_casted->voices.emplace_back(ptr->velocity / 127.0f, phase,
+                                           ptr->note);
+          }
         }
         break;
       }
       case command_type::note_off: {
         auto &&ptr = static_cast<command_note_off *>(e.get());
-        auto &&voices = channels[ptr->channel].voices;
+        auto &&voices = channels[ptr->channel]->voices;
         if (!voices.empty()) {
           auto &&first_on = std::find_if(voices.begin(), voices.end(),
                                          [](auto &&v) { return v.key; });
@@ -134,10 +173,16 @@ void player::handle_one(F32 &l, F32 &r) {
       case command_type::pitchwheel: {
         auto &&ptr = static_cast<command_pitchwheel *>(e.get());
         auto &&ch = channels[ptr->channel];
-        ch.bend = ptr->bend / 2048.0f;
-        std::for_each(ch.voices.begin(), ch.voices.end(), [&ch](auto &&c) {
-          c.phase_add_by = calculate_12tet(c.note, ch.bend);
-        });
+        if (!ch->is_drum_kit()) {
+          auto &&ch_casted = static_cast<voice_group *>(ch.get());
+          ch_casted->bend = ptr->bend / 2048.0f;
+          std::for_each(ch_casted->voices.begin(), ch_casted->voices.end(),
+                        [this, &ch_casted](auto &&c) {
+                          c.phase_add_by =
+                              calculate_12tet(c.note, ch_casted->bend) *
+                              frequency * 32.0f * std::numbers::pi;
+                        });
+        }
         break;
       }
       case command_type::program_change: {
@@ -150,18 +195,25 @@ void player::handle_one(F32 &l, F32 &r) {
       }
       }
     });
-
     last_cursor = cursor;
   }
-  auto active_voices = 0;
+  on_voices = 0;
   for (auto i = 0; i < 16; i++) {
-    auto &&channel = channels.at(i);
-    const auto &patch = current.patches.at(patch_ids.at(i));
-    channel.accumulate_into(patch, l, r);
-    std::erase_if(channel.voices, [](auto &&v) { return !v.active; });
-    active_voices += channel.voices.size();
+    auto &&ch_ptr = channels.at(i);
+    std::erase_if(ch_ptr->voices, [](auto &&v) { return !v.active; });
+    if (ch_ptr->is_drum_kit()) {
+      auto &&channel = static_cast<drum_group *>(ch_ptr.get());
+      channel->accumulate_into(current.drums, l, r);
+      on_voices += channel->voices.size();
+    } else {
+      auto &&channel = static_cast<voice_group *>(ch_ptr.get());
+      if (patch_ids.at(i).has_value()) {
+        const auto &patch = current.patches.at(*(patch_ids.at(i)));
+        channel->accumulate_into(patch, l, r);
+        on_voices += channel->voices.size();
+      }
+    }
   }
-  on_voices = active_voices;
 }
 
 void player::tick(std::vector<F32> &audio) {
@@ -175,14 +227,14 @@ void player::tick(std::vector<F32> &audio) {
 
         handle_one(l, r);
 
-        audio[i + 0] = std::clamp(l / 2.0f, -1.0f, 1.0f);
-        audio[i + 1] = std::clamp(r / 2.0f, -1.0f, 1.0f);
+        audio[i + 0] = std::clamp(l, -1.0f, 1.0f);
+        audio[i + 1] = std::clamp(r, -1.0f, 1.0f);
 
         seconds_elapsed += frequency;
         if (seconds_elapsed > seconds_end) {
-          last_cursor = 0;
+          seconds_elapsed = std::fmod(seconds_elapsed, seconds_end);
+          last_cursor = std::nullopt;
         }
-        seconds_elapsed = std::fmod(seconds_elapsed, seconds_end);
       }
     } else {
       // Mono
@@ -192,13 +244,13 @@ void player::tick(std::vector<F32> &audio) {
 
         handle_one(l, r);
 
-        audio[i] = std::clamp((l + r) / 4.0f, -1.0f, 1.0f);
+        audio[i] = std::clamp((l + r) / 2.0f, -1.0f, 1.0f);
 
         seconds_elapsed += frequency;
         if (seconds_elapsed > seconds_end) {
-          last_cursor = 0;
+          seconds_elapsed = std::fmod(seconds_elapsed, seconds_end);
+          last_cursor = std::nullopt;
         }
-        seconds_elapsed = std::fmod(seconds_elapsed, seconds_end);
       }
     }
   } else {
@@ -238,6 +290,59 @@ song song::load(std::vector<U8> &data) {
     continue_data.reverse();
 
     switch (what_value) {
+    case command_type::drum_data: {
+      // initialize pointer
+      auto &&command_ptr = new command_drum_data{};
+
+      // initialize bytes
+      auto drum = continue_data.front();
+      continue_data.pop_front();
+
+      // get sample size
+      auto width = std::vector<U32>{0, 0, 0, 0};
+      std::for_each(width.begin(), width.end(), [&continue_data](auto &&w) {
+        w = continue_data.front();
+        continue_data.pop_front();
+      });
+      auto width_calc = (width[0] << 0) | (width[1] << 8) | (width[2] << 16) |
+                        (width[3] << 24);
+
+      // get ratio, conscientious of the floating point nature
+      auto ratio_castee = std::vector<U32>{0, 0, 0, 0};
+      std::for_each(ratio_castee.begin(), ratio_castee.end(),
+                    [&continue_data](auto &&r) {
+                      r = continue_data.front();
+                      continue_data.pop_front();
+                    });
+      auto ratio_calc =
+          std::bit_cast<F32>((ratio_castee[0] << 0) | (ratio_castee[1] << 8) |
+                             (ratio_castee[2] << 16) | (ratio_castee[3] << 24));
+
+      // get gain, conscientious of the floating point nature
+      auto gain_castee = std::vector<U32>{0, 0, 0, 0};
+      std::for_each(gain_castee.begin(), gain_castee.end(),
+                    [&continue_data](auto &&g) {
+                      g = continue_data.front();
+                      continue_data.pop_front();
+                    });
+      auto gain_calc =
+          std::bit_cast<F32>((gain_castee[0] << 0) | (gain_castee[1] << 8) |
+                             (gain_castee[2] << 16) | (gain_castee[3] << 24));
+
+      auto drum_data = drum_t{};
+      drum_data.waveform.resize(width_calc);
+      drum_data.ratio = ratio_calc;
+      drum_data.gain = gain_calc;
+
+      // sample is loaded here
+      std::for_each(drum_data.waveform.begin(), drum_data.waveform.end(),
+                    [&data, &where](auto &&b) { b = data.at(++where); });
+      the_song.drums.insert({drum, drum_data});
+
+      // dispatch pointer
+      the_song.commands.emplace(0, command_ptr);
+      break;
+    }
     case command_type::patch_data: {
       // initialize pointer
       auto &&command_ptr = new command_patch_data{};
@@ -284,11 +389,23 @@ song song::load(std::vector<U8> &data) {
           std::bit_cast<F32>((ratio_castee[0] << 0) | (ratio_castee[1] << 8) |
                              (ratio_castee[2] << 16) | (ratio_castee[3] << 24));
 
+      // get gain, conscientious of the floating point nature
+      auto gain_castee = std::vector<U32>{0, 0, 0, 0};
+      std::for_each(gain_castee.begin(), gain_castee.end(),
+                    [&continue_data](auto &&g) {
+                      g = continue_data.front();
+                      continue_data.pop_front();
+                    });
+      auto gain_calc =
+          std::bit_cast<F32>((gain_castee[0] << 0) | (gain_castee[1] << 8) |
+                             (gain_castee[2] << 16) | (gain_castee[3] << 24));
+
       auto patch_data = patch_t{};
       patch_data.waveform.resize(width_calc);
       patch_data.loop_start = start_calc;
       patch_data.loop_end = end_calc;
       patch_data.ratio = ratio_calc;
+      patch_data.gain = gain_calc;
 
       // sample is loaded here
       std::for_each(patch_data.waveform.begin(), patch_data.waveform.end(),

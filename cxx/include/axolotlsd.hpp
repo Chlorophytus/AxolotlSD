@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace axolotlsd {
@@ -48,6 +49,7 @@ enum class command_type : U8 {
   program_change = 0x04,
   // patches
   patch_data = 0x80,
+	drum_data = 0x81,
   // meta
   version = 0xFC,
   rate = 0xFD,
@@ -79,6 +81,9 @@ struct command_program_change : command {
 struct command_patch_data : command {
   virtual command_type get_type() { return command_type::patch_data; }
 };
+struct command_drum_data : command {
+  virtual command_type get_type() { return command_type::drum_data; }
+};
 struct command_version : command {
   virtual command_type get_type() { return command_type::version; }
   U16 song_version;
@@ -91,12 +96,22 @@ struct command_end_of_track : command {
   virtual command_type get_type() { return command_type::end_of_track; }
 };
 // ============================================================================
-struct patch_t {
+struct patch_base_t {
+	virtual bool is_drum() = 0;
 	patch_data_t waveform{};
+	F32 ratio;
+	F32 gain;
+};
+struct patch_t : patch_base_t {
 	U32 loop_start;
 	U32 loop_end;
-	F32 ratio;
+
+	virtual bool is_drum() { return false; }
 };
+struct drum_t : patch_base_t {
+	virtual bool is_drum() { return true; }
+};
+using drum_map_t = std::map<U8, drum_t>;
 // ============================================================================
 struct voice_single {
   F32 velocity;
@@ -106,16 +121,19 @@ struct voice_single {
 	bool key = true;
 	bool active = true;
 };
-struct voice_group {
-  U32 polyphony_on = 0;
-  U32 polyphony_off = 0;
-	F32 bend = 0.0f;
-
+struct voice_group_base {
   std::vector<voice_single> voices{};
-
-  void accumulate_into(const patch_t &, F32 &, F32 &);
+	virtual bool is_drum_kit() = 0;
 };
-
+struct voice_group : voice_group_base {
+	F32 bend = 0.0f;
+  void accumulate_into(const patch_t &, F32 &, F32 &);
+	virtual bool is_drum_kit() { return false; }
+};
+struct drum_group : voice_group_base {
+	void accumulate_into(const drum_map_t &, F32 &, F32 &);
+	virtual bool is_drum_kit() { return true; }
+};
 // ============================================================================
 struct song {
   U16 version;
@@ -124,6 +142,7 @@ struct song {
 
   std::multimap<song_tick_t, std::unique_ptr<command>> commands{};
   std::map<U8, patch_t> patches{};
+  drum_map_t drums{};
 
   static song load(std::vector<U8> &);
 };
@@ -135,15 +154,16 @@ struct player {
   U32 max_voices;
   U32 on_voices = 0;
 
-  U32 last_cursor = 0;
+  U32 cursor = 0;
+	std::optional<U32> last_cursor = std::nullopt;
 
   song current;
   bool in_stereo;
 
   explicit player(U32, U32, bool);
 
-  std::array<voice_group, 16> channels{};
-  std::array<U8, 16> patch_ids{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  std::array<std::unique_ptr<voice_group_base>, 16> channels{};
+  std::array<std::optional<U8>, 16> patch_ids{std::nullopt};
 
   bool playback = false;
 
