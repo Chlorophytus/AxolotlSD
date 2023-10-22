@@ -32,7 +32,7 @@ const static std::map<command_type, size_t> byte_sizes{
     {command_type::note_on, sizeof(song_tick_t) + (sizeof(U8) * 3)},
     {command_type::note_off, sizeof(song_tick_t) + (sizeof(U8) * 1)},
     {command_type::pitchwheel,
-     sizeof(song_tick_t) + (sizeof(U8) * 1) + sizeof(U16)},
+     sizeof(song_tick_t) + (sizeof(U8) * 1) + sizeof(U32)},
     {command_type::program_change, sizeof(song_tick_t) + (sizeof(U8) * 2)},
 
     {command_type::patch_data,
@@ -184,7 +184,7 @@ void player::handle_one(F32 &l, F32 &r) {
         auto &&ch = channels[ptr->channel];
         if (!ch->is_drum_kit()) {
           auto &&ch_casted = static_cast<voice_group *>(ch.get());
-          ch_casted->bend = ptr->bend / 2048.0f;
+          ch_casted->bend = ptr->bend / 4096.0f;
           std::for_each(ch_casted->voices.begin(), ch_casted->voices.end(),
                         [this, &ch_casted](auto &&c) {
                           c.phase_add_by =
