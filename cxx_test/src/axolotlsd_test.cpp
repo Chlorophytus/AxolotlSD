@@ -15,29 +15,20 @@
 // ============================================================================
 // Test program file
 #include "configuration.hpp"
-#include <raylib.h>
 #include <axolotlsd.hpp>
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
+#include <raylib.h>
 
-static auto player = std::unique_ptr<axolotlsd::player>{nullptr};
-
-void audio_callback(void *buffer_data, unsigned int frames) {
-  auto buffer_vector = std::vector<axolotlsd::F32>{};
-  buffer_vector.resize(frames * 2, 0.0f);
-
-  player->tick(buffer_vector);
-
-  for(auto i = 0; i < frames * 2; i++) {
-    reinterpret_cast<axolotlsd::F32 *>(buffer_data)[i] = buffer_vector[i];
-  }
-}
+constexpr static auto FILL_FRAMES = 1800;
+constexpr static auto USE_STEREO = true;
 
 int main(int argc, char **argv) {
-  std::fprintf(stderr, "AxolotlSD C++ tester " axolotlsd_test_VSTRING_FULL "\n");
+  std::fprintf(stderr,
+               "AxolotlSD C++ tester " axolotlsd_test_VSTRING_FULL "\n");
   std::fprintf(stderr, "Using AxolotlSD C++ lib " axolotlsd_VSTRING_FULL "\n");
 
-  if(argc != 2) {
+  if (argc != 2) {
     std::fprintf(stderr, "Please specify a file name to play back\n");
     return EXIT_FAILURE;
   }
@@ -45,24 +36,48 @@ int main(int argc, char **argv) {
   auto reader = std::fopen(argv[1], "r");
   auto song_bytes = std::vector<axolotlsd::U8>{};
   int ch;
-  while((ch = std::fgetc(reader)) != EOF) {
+  while ((ch = std::fgetc(reader)) != EOF) {
     auto byte = static_cast<axolotlsd::U8>(ch);
     song_bytes.emplace_back(byte);
   }
-  player = std::make_unique<axolotlsd::player>(32, 44100, true);
-  player->play(axolotlsd::song::load(song_bytes));
+  auto player = axolotlsd::player{32, 44100, USE_STEREO};
+  player.play(axolotlsd::song::load(song_bytes),
+              axolotlsd::environment{.feedback_L = 0.85f,
+                                     .feedback_R = 0.85f,
+                                     .wet_L = -0.33f,
+                                     .wet_R = 0.33f,
+                                     .cursor_increment = 0x01,
+                                     .cursor_max = 0x1800});
 
   InitWindow(640, 480, "AxolotlSD C++ tester " axolotlsd_test_VSTRING_FULL);
   InitAudioDevice();
-  auto audio_stream = LoadAudioStream(44100, 8 * sizeof(axolotlsd::F32), 2);
-  SetAudioStreamCallback(audio_stream, &audio_callback);
+	SetAudioStreamBufferSizeDefault(FILL_FRAMES);
+  auto audio_stream =
+      LoadAudioStream(44100, 8 * sizeof(axolotlsd::F32), (USE_STEREO ? 2 : 1));
+  auto buffer_vector = std::vector<axolotlsd::F32>{};
+  buffer_vector.resize(FILL_FRAMES * (USE_STEREO ? 2 : 1), 0.0f);
   PlayAudioStream(audio_stream);
   SetTargetFPS(60);
   while (!WindowShouldClose()) {
+   	while(IsAudioStreamProcessed(audio_stream))  {
+			player.tick(buffer_vector);
+      UpdateAudioStream(audio_stream, buffer_vector.data(),
+                        buffer_vector.size() / (USE_STEREO ? 2 : 1));
+    } 
     BeginDrawing();
     ClearBackground(RAYWHITE);
+    DrawFPS(20, 20);
+    if (IsKeyReleased('P')) {
+      player.playback = !player.playback;
+    }
+    if (player.playback) {
+      DrawText("Music playing, 'P' pauses", 20, 50, 20, GREEN);
+    } else {
+      DrawText("Music paused, 'P' plays", 20, 50, 20, RED);
+    }
     EndDrawing();
   }
+  StopAudioStream(audio_stream);
   UnloadAudioStream(audio_stream);
   CloseAudioDevice();
   CloseWindow();

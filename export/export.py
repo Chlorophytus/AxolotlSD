@@ -43,8 +43,9 @@ with open(sys.argv[2], 'wb') as writer:
                 raise f"Bank drum sample '{drum}.wav' is not 8-bit PCM"
             frame_count = w.getnframes()
             writer.write(
-                struct.pack('<BBIff', 0x81, int(drum), frame_count,
-                            float(info["pitch"]), float(info["gain"])))
+                struct.pack('<BBIfff', 0x81, int(drum), frame_count,
+                            float(info["pitch"]), float(info["gain"][0]),
+                            float(info["gain"][1])))
             for frame in w.readframes(frame_count):
                 writer.write(struct.pack('<B', frame))
             print(f"{drum}: {frame_count}")
@@ -59,9 +60,10 @@ with open(sys.argv[2], 'wb') as writer:
 
             frame_count = w.getnframes()
             writer.write(
-                struct.pack('<BBIIIff', 0x80, int(patch), frame_count,
+                struct.pack('<BBIIIfff', 0x80, int(patch), frame_count,
                             int(info["start"]), int(info["end"]),
-                            float(info["pitch"]), float(info["gain"])))
+                            float(info["pitch"]), float(info["gain"][0]),
+                            float(info["gain"][1])))
             for frame in w.readframes(frame_count):
                 writer.write(struct.pack('<B', frame))
             print(f"{patch}: loop {info['start']}-{info['end']} {frame_count}")

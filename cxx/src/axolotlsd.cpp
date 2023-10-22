@@ -35,9 +35,9 @@ const static std::map<command_type, size_t> byte_sizes{
      sizeof(song_tick_t) + (sizeof(U8) * 1) + sizeof(U16)},
     {command_type::program_change, sizeof(song_tick_t) + (sizeof(U8) * 2)},
 
-    {command_type::patch_data, sizeof(U8) + sizeof(U32) + sizeof(U32) +
-                                   sizeof(U32) + sizeof(F32) + sizeof(F32)},
-    {command_type::drum_data, sizeof(U8) + sizeof(U32) + sizeof(F32) + sizeof(F32)},
+    {command_type::patch_data,
+     sizeof(U8) + sizeof(U32) + sizeof(U32) + sizeof(U32) + (sizeof(F32) * 3)},
+    {command_type::drum_data, sizeof(U8) + sizeof(U32) + (sizeof(F32) * 3)},
 
     {command_type::version, sizeof(U16)},
     {command_type::rate, sizeof(U32)},
@@ -47,10 +47,16 @@ static F32 calculate_12tet(U8 note, F32 bend) {
   return std::pow(2.0f, (note - 69.0f + bend) / 12.0f) * A440;
 }
 
+static F32 calculate_mix(F32 x, F32 y, F32 a) {
+  return (x * (1.0f - a)) + (y * a);
+}
+
 player::player(U32 count, U32 freq, bool stereo)
     : frequency{1.0f / freq}, in_stereo{stereo}, max_voices{count} {}
 
-void player::play(song &&next) {
+void player::play(song &&next, std::optional<environment> &&env) {
+
+  std::swap(env_params, env);
   std::swap(current, next);
 
   for (auto i = 0; i < 16; i++) {
@@ -78,6 +84,7 @@ void player::play(song &&next) {
 
   on_voices = 0;
   cursor = 0;
+  echo_cursor = 0;
   last_cursor = std::nullopt;
   playback = true;
 }
@@ -102,8 +109,8 @@ void voice_group::accumulate_into(const patch_t &patch, F32 &l, F32 &r) {
     }
     v.phase += v.phase_add_by;
 
-    l += sample * v.velocity * patch.gain;
-    r += sample * v.velocity * patch.gain;
+    l += sample * v.velocity * patch.gain_L;
+    r += sample * v.velocity * patch.gain_R;
   });
 }
 
@@ -111,7 +118,8 @@ void drum_group::accumulate_into(const drum_map_t &mapping, F32 &l, F32 &r) {
   std::for_each(voices.begin(), voices.end(), [&mapping, &l, &r](auto &&d) {
     auto sample = 0.0f;
     auto &&map_found = mapping.find(d.note);
-    auto gain = 0.0f;
+    auto gain_L = 0.0f;
+		auto gain_R = 0.0f;
 
     if (map_found != mapping.end()) {
       auto &&[_, patch] = *map_found;
@@ -121,14 +129,15 @@ void drum_group::accumulate_into(const drum_map_t &mapping, F32 &l, F32 &r) {
       } else {
         sample = (static_cast<F32>(patch.waveform.at(here)) - 128.0f) / 128.0f;
       }
-      gain = patch.gain;
+      gain_L = patch.gain_L;
+      gain_R = patch.gain_R;
       d.phase += d.phase_add_by;
     } else {
       d.active = false;
     }
 
-    l += sample * d.velocity * gain;
-    r += sample * d.velocity * gain;
+    l += sample * d.velocity * gain_L;
+    r += sample * d.velocity * gain_R;
   });
 }
 
@@ -216,45 +225,66 @@ void player::handle_one(F32 &l, F32 &r) {
   }
 }
 
+void player::maybe_echo_one(F32 &l, F32 &r) {
+  if (env_params.has_value()) {
+    auto &&env = env_params.value();
+    echo_buffer_L[echo_cursor] += l;
+    echo_buffer_R[echo_cursor] += r;
+    echo_buffer_L[echo_cursor] *= env.feedback_L;
+    echo_buffer_R[echo_cursor] *= env.feedback_R;
+
+    // protect against clipping
+    echo_buffer_L[echo_cursor] =
+        std::clamp(echo_buffer_L[echo_cursor], -1.0f, 1.0f);
+    echo_buffer_R[echo_cursor] =
+        std::clamp(echo_buffer_R[echo_cursor], -1.0f, 1.0f);
+
+    l = calculate_mix(l, echo_buffer_L[echo_cursor], env.wet_L);
+    r = calculate_mix(r, echo_buffer_R[echo_cursor], env.wet_R);
+    echo_cursor += env.cursor_increment;
+    echo_cursor %= env.cursor_max;
+  }
+}
+
 void player::tick(std::vector<F32> &audio) {
-  if (playback) {
-    const auto size = audio.size();
-    if (in_stereo) {
-      // Stereo
-      for (auto i = 0; i < size; i += 2) {
-        auto l = 0.0f;
-        auto r = 0.0f;
+  const auto size = audio.size();
+  if (in_stereo) {
+    // Stereo
+    for (auto i = 0; i < size; i += 2) {
+      auto l = 0.0f;
+      auto r = 0.0f;
 
+      if (playback) {
         handle_one(l, r);
-
-        audio[i + 0] = std::clamp(l, -1.0f, 1.0f);
-        audio[i + 1] = std::clamp(r, -1.0f, 1.0f);
-
         seconds_elapsed += frequency;
         if (seconds_elapsed > seconds_end) {
           seconds_elapsed = std::fmod(seconds_elapsed, seconds_end);
           last_cursor = std::nullopt;
         }
       }
-    } else {
-      // Mono
-      for (auto i = 0; i < size; i += 1) {
-        auto l = 0.0f;
-        auto r = 0.0f;
 
-        handle_one(l, r);
-
-        audio[i] = std::clamp((l + r) / 2.0f, -1.0f, 1.0f);
-
-        seconds_elapsed += frequency;
-        if (seconds_elapsed > seconds_end) {
-          seconds_elapsed = std::fmod(seconds_elapsed, seconds_end);
-          last_cursor = std::nullopt;
-        }
-      }
+      maybe_echo_one(l, r);
+      audio[i + 0] = std::clamp(l, -1.0f, 1.0f);
+      audio[i + 1] = std::clamp(r, -1.0f, 1.0f);
     }
   } else {
-    std::for_each(audio.begin(), audio.end(), [](auto &&a) { a = 0; });
+    // Mono
+    for (auto i = 0; i < size; i += 1) {
+      auto l = 0.0f;
+      auto r = 0.0f;
+
+      if (playback) {
+        handle_one(l, r);
+        seconds_elapsed += frequency;
+        if (seconds_elapsed > seconds_end) {
+          seconds_elapsed = std::fmod(seconds_elapsed, seconds_end);
+          last_cursor = std::nullopt;
+        }
+      }
+
+      maybe_echo_one(l, r);
+      audio[i] = std::clamp((l + r) / 2.0f, -1.0f, 1.0f);
+    }
   }
 }
 
@@ -319,20 +349,29 @@ song song::load(std::vector<U8> &data) {
                              (ratio_castee[2] << 16) | (ratio_castee[3] << 24));
 
       // get gain, conscientious of the floating point nature
-      auto gain_castee = std::vector<U32>{0, 0, 0, 0};
-      std::for_each(gain_castee.begin(), gain_castee.end(),
+      auto gainL_castee = std::vector<U32>{0, 0, 0, 0};
+      std::for_each(gainL_castee.begin(), gainL_castee.end(),
                     [&continue_data](auto &&g) {
                       g = continue_data.front();
                       continue_data.pop_front();
                     });
-      auto gain_calc =
-          std::bit_cast<F32>((gain_castee[0] << 0) | (gain_castee[1] << 8) |
-                             (gain_castee[2] << 16) | (gain_castee[3] << 24));
-
+      auto gainL_calc =
+          std::bit_cast<F32>((gainL_castee[0] << 0) | (gainL_castee[1] << 8) |
+                             (gainL_castee[2] << 16) | (gainL_castee[3] << 24));
+      auto gainR_castee = std::vector<U32>{0, 0, 0, 0};
+      std::for_each(gainR_castee.begin(), gainR_castee.end(),
+                    [&continue_data](auto &&g) {
+                      g = continue_data.front();
+                      continue_data.pop_front();
+                    });
+      auto gainR_calc =
+          std::bit_cast<F32>((gainR_castee[0] << 0) | (gainR_castee[1] << 8) |
+                             (gainR_castee[2] << 16) | (gainR_castee[3] << 24));
       auto drum_data = drum_t{};
       drum_data.waveform.resize(width_calc);
       drum_data.ratio = ratio_calc;
-      drum_data.gain = gain_calc;
+      drum_data.gain_L = gainL_calc;
+      drum_data.gain_R = gainR_calc;
 
       // sample is loaded here
       std::for_each(drum_data.waveform.begin(), drum_data.waveform.end(),
@@ -390,22 +429,31 @@ song song::load(std::vector<U8> &data) {
                              (ratio_castee[2] << 16) | (ratio_castee[3] << 24));
 
       // get gain, conscientious of the floating point nature
-      auto gain_castee = std::vector<U32>{0, 0, 0, 0};
-      std::for_each(gain_castee.begin(), gain_castee.end(),
+      auto gainL_castee = std::vector<U32>{0, 0, 0, 0};
+      std::for_each(gainL_castee.begin(), gainL_castee.end(),
                     [&continue_data](auto &&g) {
                       g = continue_data.front();
                       continue_data.pop_front();
                     });
-      auto gain_calc =
-          std::bit_cast<F32>((gain_castee[0] << 0) | (gain_castee[1] << 8) |
-                             (gain_castee[2] << 16) | (gain_castee[3] << 24));
-
+      auto gainL_calc =
+          std::bit_cast<F32>((gainL_castee[0] << 0) | (gainL_castee[1] << 8) |
+                             (gainL_castee[2] << 16) | (gainL_castee[3] << 24));
+      auto gainR_castee = std::vector<U32>{0, 0, 0, 0};
+      std::for_each(gainR_castee.begin(), gainR_castee.end(),
+                    [&continue_data](auto &&g) {
+                      g = continue_data.front();
+                      continue_data.pop_front();
+                    });
+      auto gainR_calc =
+          std::bit_cast<F32>((gainR_castee[0] << 0) | (gainR_castee[1] << 8) |
+                             (gainR_castee[2] << 16) | (gainR_castee[3] << 24));
       auto patch_data = patch_t{};
       patch_data.waveform.resize(width_calc);
       patch_data.loop_start = start_calc;
       patch_data.loop_end = end_calc;
       patch_data.ratio = ratio_calc;
-      patch_data.gain = gain_calc;
+      patch_data.gain_L = gainL_calc;
+      patch_data.gain_R = gainR_calc;
 
       // sample is loaded here
       std::for_each(patch_data.waveform.begin(), patch_data.waveform.end(),

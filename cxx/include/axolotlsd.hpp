@@ -100,7 +100,8 @@ struct patch_base_t {
 	virtual bool is_drum() = 0;
 	patch_data_t waveform{};
 	F32 ratio;
-	F32 gain;
+	F32 gain_L;
+	F32 gain_R;
 };
 struct patch_t : patch_base_t {
 	U32 loop_start;
@@ -146,13 +147,25 @@ struct song {
 
   static song load(std::vector<U8> &);
 };
-
+struct environment {
+	F32 feedback_L;
+	F32 feedback_R;
+	F32 wet_L;
+	F32 wet_R;
+	U16 cursor_increment;
+	U16 cursor_max;
+};
 struct player {
   F32 seconds_elapsed = 0.0f;
   F32 seconds_end;
   F32 frequency;
   U32 max_voices;
   U32 on_voices = 0;
+
+	F32 echo_buffer_L[65535]{0.0f};
+	F32 echo_buffer_R[65535]{0.0f};
+	U16 echo_cursor = 0;
+	std::optional<environment> env_params = std::nullopt;
 
   U32 cursor = 0;
 	std::optional<U32> last_cursor = std::nullopt;
@@ -167,9 +180,10 @@ struct player {
 
   bool playback = false;
 
-  void play(song &&);
+  void play(song &&, std::optional<environment> &&);
   void pause();
   void tick(std::vector<F32> &);
   void handle_one(F32 &, F32 &);
+	void maybe_echo_one(F32 &, F32 &);
 };
 } // namespace axolotlsd
