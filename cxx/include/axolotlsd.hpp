@@ -49,7 +49,7 @@ enum class command_type : U8 {
   program_change = 0x04,
   // patches
   patch_data = 0x80,
-	drum_data = 0x81,
+  drum_data = 0x81,
   // meta
   version = 0xFC,
   rate = 0xFD,
@@ -97,43 +97,43 @@ struct command_end_of_track : command {
 };
 // ============================================================================
 struct patch_base_t {
-	virtual bool is_drum() = 0;
-	patch_data_t waveform{};
-	F32 ratio;
-	F32 gain_L;
-	F32 gain_R;
+  virtual bool is_drum() = 0;
+  patch_data_t waveform{};
+  F32 ratio;
+  F32 gain_L;
+  F32 gain_R;
 };
 struct patch_t : patch_base_t {
-	U32 loop_start;
-	U32 loop_end;
+  U32 loop_start;
+  U32 loop_end;
 
-	virtual bool is_drum() { return false; }
+  virtual bool is_drum() { return false; }
 };
 struct drum_t : patch_base_t {
-	virtual bool is_drum() { return true; }
+  virtual bool is_drum() { return true; }
 };
 using drum_map_t = std::map<U8, drum_t>;
 // ============================================================================
 struct voice_single {
   F32 velocity;
   F32 phase_add_by;
-	U8 note;
+  U8 note;
   F32 phase = 0.0f;
-	bool key = true;
-	bool active = true;
+  bool key = true;
+  bool active = true;
 };
 struct voice_group_base {
   std::vector<voice_single> voices{};
-	virtual bool is_drum_kit() = 0;
+  virtual bool is_drum_kit() = 0;
 };
 struct voice_group : voice_group_base {
-	F32 bend = 0.0f;
+  F32 bend = 0.0f;
   void accumulate_into(const patch_t &, F32 &, F32 &);
-	virtual bool is_drum_kit() { return false; }
+  virtual bool is_drum_kit() { return false; }
 };
 struct drum_group : voice_group_base {
-	void accumulate_into(const drum_map_t &, F32 &, F32 &);
-	virtual bool is_drum_kit() { return true; }
+  void accumulate_into(const drum_map_t &, F32 &, F32 &);
+  virtual bool is_drum_kit() { return true; }
 };
 // ============================================================================
 struct song {
@@ -146,14 +146,15 @@ struct song {
   drum_map_t drums{};
 
   static song load(std::vector<U8> &);
+  static song load_xxd_format(unsigned char *, unsigned int);
 };
 struct environment {
-	F32 feedback_L;
-	F32 feedback_R;
-	F32 wet_L;
-	F32 wet_R;
-	U16 cursor_increment;
-	U16 cursor_max;
+  F32 feedback_L;
+  F32 feedback_R;
+  F32 wet_L;
+  F32 wet_R;
+  U16 cursor_increment;
+  U16 cursor_max;
 };
 struct player {
   F32 seconds_elapsed = 0.0f;
@@ -162,13 +163,13 @@ struct player {
   U32 max_voices;
   U32 on_voices = 0;
 
-	F32 echo_buffer_L[65535]{0.0f};
-	F32 echo_buffer_R[65535]{0.0f};
-	U16 echo_cursor = 0;
-	std::optional<environment> env_params = std::nullopt;
+  F32 echo_buffer_L[65535]{0.0f};
+  F32 echo_buffer_R[65535]{0.0f};
+  U16 echo_cursor = 0;
+  std::optional<environment> env_params = std::nullopt;
 
   U32 cursor = 0;
-	std::optional<U32> last_cursor = std::nullopt;
+  std::optional<U32> last_cursor = std::nullopt;
 
   song current;
   bool in_stereo;
@@ -184,6 +185,6 @@ struct player {
   void pause();
   void tick(std::vector<F32> &);
   void handle_one(F32 &, F32 &);
-	void maybe_echo_one(F32 &, F32 &);
+  void maybe_echo_one(F32 &, F32 &);
 };
 } // namespace axolotlsd

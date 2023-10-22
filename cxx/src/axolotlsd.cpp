@@ -160,7 +160,7 @@ void player::handle_one(F32 &l, F32 &r) {
           } else {
             auto &&ch_casted = static_cast<voice_group *>(ch.get());
             auto phase = calculate_12tet(ptr->note, ch_casted->bend) *
-                         frequency * 32.0f * std::numbers::pi;
+                         frequency * 100.0f;
             ch_casted->voices.emplace_back(ptr->velocity / 127.0f, phase,
                                            ptr->note);
           }
@@ -189,7 +189,7 @@ void player::handle_one(F32 &l, F32 &r) {
                         [this, &ch_casted](auto &&c) {
                           c.phase_add_by =
                               calculate_12tet(c.note, ch_casted->bend) *
-                              frequency * 32.0f * std::numbers::pi;
+                              frequency * 100.0f;
                         });
         }
         break;
@@ -286,6 +286,16 @@ void player::tick(std::vector<F32> &audio) {
       audio[i] = std::clamp((l + r) / 2.0f, -1.0f, 1.0f);
     }
   }
+}
+
+// This convenience loads an "xxd -i" format song dump
+song song::load_xxd_format(unsigned char *data, unsigned int len) {
+	auto vec = std::vector<U8>{};
+	vec.resize(len);
+	for(auto i = 0; i < len; i++) {
+		vec[i] = data[i];
+	}
+	return song::load(vec);
 }
 
 song song::load(std::vector<U8> &data) {
