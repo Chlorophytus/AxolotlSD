@@ -1,46 +1,70 @@
 # AxolotlSD
-AxolotlSD Sound Driver for Godot 4.
 
-## GDScript files in `godot`
-These are used in your Godot game.
+AxolotlSD Sound Driver for C++20.
 
-### AXSDAudioStreamData
-A sequencer dump, used to play note data, current breaking version is specified as 16-bit unsigned constant `VERSION`.
+## `cxx`
 
-When a breaking `VERSION` change is encountered, you need to export the MIDI into a sequencer dump again.
+This is the library itself. `axolotlsd` is a shared library, `axolotlsd_s` is a static one.
 
-### AXSDAudioStreamPlayer
-Plays the `AXSDAudioStreamData` with `AXSDAudioWAVProfile`s. Each sequencer pitch is calculated based on [12 equal temperament][twelve-tet].
+### Example usage
 
-### AXSDAudioWAVProfile
-Each AXSDAudioWAVProfile is mapped to a MIDI channel. The sequencer exporter may be updated so that the MIDI instruments are mapped rather than their channels.
+#### Creating an AxolotlSD player
 
-#### Profile options
-- `data`: Godot Wave file data.
-- `envelope`: [ADSR][adsr] envelope, Godot `Curve` format. Each point is in seconds.
-- `sustain_at`: The point in seconds where the [ADSR][adsr] envelope will hold until released.
-- `pitch_multiplier`: If a sample is too flat or sharp and setting the A440 doesn't help then use this to multiply the calculated pitch finely.
-- `vibrato_frequency`: Vibrato frequency in cycles per second.
-- `vibrato_intensity`: Vibrato intensity ratio into the calculated pitch. Set this to a very low number (like 0.005) when using vibrato.
-- `volume`: Normalized result volume. Set to 0 to mute the sample.
-- `a440`: A440 pitch in integer MIDI note pitch.
+Create an AxolotlSD player with 32 maximum voice polyphony, 44100Hz sample rate, and stereo sound.
 
-## `export/export.py`
+```cxx
+auto player = axolotlsd::player{32, 44100, true};
+```
+
+#### Loading and playing an AxolotlSD song
+
+Load a song and play it back.
+
+```cxx
+player.play(axolotlsd::song::load(song_bytes),
+            axolotlsd::environment{.feedback_L = 0.85f,
+                                   .feedback_R = 0.85f,
+                                   .wet_L = -0.33f,
+                                   .wet_R = 0.33f,
+                                   .cursor_increment = 0x01,
+                                   .cursor_max = 0x1800});
+```
+
+`song_bytes` is a `std::vector` with unsigned bytes.
+Load your `.axsd` sequence's bytecode into the vector and it should work.
+
+The `axolotlsd::environment` is optional, but it provides a profile for the echo buffer.
+When not using the environment/echo buffer, pass as `std::nullopt`.
+
+### Note: Statically including a song with `xxd -i`
+
+If you have `xxd`, you could export a song's bytecode with `xxd -i <your sequence here>.axsd > out.h`.
+Use `axolotlsd::song::load_xxd_format` instead of `axolotlsd::song::load`.
+
+## `cxx_test`
+
+A raylib test player, linked dynamically with AxolotlSD.
+The player `CMakeLists.txt` can be modified to run a static AxolotlSD.
+
+## `export`
+
+This is used to export AxolotlSD sequencer dumps.
+
 ### Going into venv then using pip
+
 ```shell
 $ cd export
 $ python3 -m venv .
 $ . ./bin/activate
 $ pip install -r requirements.txt
-$ ./export.py input.mid output.axsd.txt
+$ ./export.py input.mid output.axsd sample_pack/
 ```
-...then you load the `output` file into Godot, and point the `AXSDAudioStreamData` path to it.
 
 ### Details
-This is a Python 3 script that handles exporting MIDI note data to AxolotlSD sequencer note data.
 
+This is a Python 3 script that handles exporting MIDI note data to AxolotlSD sequencer note data.
 - The first argument is an input MIDI file.
 - The second argument is the file to export to.
+- The third argument is a directory with drums, patches, and a sample pack JSON description.
 
-[adsr]: https://en.wikipedia.org/wiki/ADSR_envelope
-[twelve-tet]: https://en.wikipedia.org/wiki/12_equal_temperament
+You can hex edit `Funk.axsd`, and compare it to `Funk.mid` which is a General MIDI song that was used for testing.
