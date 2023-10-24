@@ -24,7 +24,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(GRAPHICS GRAPHICS_API_OPENGL_43)
 
 # Project instantiation
-project(axolotlsd_test VERSION 0.1.0.5)
+project(axolotlsd_test VERSION 0.1.0.6)
 
 # Find AxolotlSD
 include(FindPkgConfig)

@@ -21,6 +21,7 @@
 #include <raylib.h>
 
 constexpr static auto FILL_FRAMES = 1800;
+constexpr static auto SAMPLE_RATE = 22050;
 constexpr static auto USE_STEREO = true;
 
 int main(int argc, char **argv) {
@@ -40,20 +41,20 @@ int main(int argc, char **argv) {
     auto byte = static_cast<axolotlsd::U8>(ch);
     song_bytes.emplace_back(byte);
   }
-  auto player = axolotlsd::player{32, 44100, USE_STEREO};
+  auto player = axolotlsd::player{32, SAMPLE_RATE, USE_STEREO};
   player.play(axolotlsd::song::load(song_bytes),
-              axolotlsd::environment{.feedback_L = 0.85f,
-                                     .feedback_R = 0.85f,
-                                     .wet_L = -0.33f,
-                                     .wet_R = 0.33f,
+              axolotlsd::environment{.feedback_L = 0.8f,
+                                     .feedback_R = 0.8f,
+                                     .wet_L = -0.25f,
+                                     .wet_R = 0.25f,
                                      .cursor_increment = 0x01,
-                                     .cursor_max = 0x1800});
+                                     .cursor_max = 0x1400});
 
   InitWindow(640, 480, "AxolotlSD C++ tester " axolotlsd_test_VSTRING_FULL);
   InitAudioDevice();
 	SetAudioStreamBufferSizeDefault(FILL_FRAMES);
   auto audio_stream =
-      LoadAudioStream(44100, 8 * sizeof(axolotlsd::F32), (USE_STEREO ? 2 : 1));
+      LoadAudioStream(SAMPLE_RATE, 8 * sizeof(axolotlsd::F32), (USE_STEREO ? 2 : 1));
   auto buffer_vector = std::vector<axolotlsd::F32>{};
   buffer_vector.resize(FILL_FRAMES * (USE_STEREO ? 2 : 1), 0.0f);
   PlayAudioStream(audio_stream);
