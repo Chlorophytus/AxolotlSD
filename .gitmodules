@@ -1,3 +1,6 @@
 [submodule "cxx_test/raylib"]
 	path = cxx_test/raylib
 	url = https://github.com/raysan5/raylib.git
+[submodule "cxx"]
+	path = cxx
+	url = https://github.com/Chlorophytus/libaxolotlsd.git
