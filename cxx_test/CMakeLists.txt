@@ -24,7 +24,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(GRAPHICS GRAPHICS_API_OPENGL_43)
 
 # Project instantiation
-project(axolotlsd_test VERSION 0.5.0.8)
+project(axolotlsd_test VERSION 0.6.0.10)
 
 # Find AxolotlSD
 add_subdirectory(libaxolotlsd)

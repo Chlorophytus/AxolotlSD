@@ -45,15 +45,16 @@ int main(int argc, char **argv) {
   auto sfx00 = axolotlsd::sfx::load_xxd_format(sfx00_raw, sfx00_raw_len);
   auto player = axolotlsd::player{32, SAMPLE_RATE, USE_STEREO};
   auto filter = axolotlsd::environment::parse_sfc_echo(
-      {0x0d, 0x22, 0x22, 0x24, 0x11, 0xf0, 0x03, 0xff});
-  player.put_environment(axolotlsd::environment{.feedback_L = 0.5f,
-                                                .feedback_R = 0.5f,
+      {0x0c, 0x21, 0x2b, 0x2b, 0x13, 0xfe, 0xf3, 0xf9});
+  player.put_environment(axolotlsd::environment{.feedback_L = 0.6f,
+                                                .feedback_R = 0.6f,
                                                 .wet_L = 0.66f,
                                                 .wet_R = 0.66f,
-                                                .cursor_max = 0x2000,
+                                                .cursor_max = 0x1000,
                                                 .fir_filter = filter});
-  player.play(axolotlsd::song::load(song_bytes));
-  InitWindow(640, 480, "AxolotlSD C++ tester " axolotlsd_test_VSTRING_FULL);
+  player.load(axolotlsd::song::load(song_bytes));
+	player.play();
+  InitWindow(1280, 720, "AxolotlSD C++ tester " axolotlsd_test_VSTRING_FULL);
   InitAudioDevice();
   SetAudioStreamBufferSizeDefault(FILL_FRAMES);
   auto audio_stream = LoadAudioStream(SAMPLE_RATE, 8 * sizeof(axolotlsd::F32),
