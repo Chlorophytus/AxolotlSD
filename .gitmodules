@@ -4,3 +4,6 @@
 [submodule "cxx"]
 	path = cxx
 	url = https://github.com/Chlorophytus/libaxolotlsd.git
+[submodule "cxx_test/libaxolotlsd"]
+	path = cxx_test/libaxolotlsd
+	url = https://github.com/Chlorophytus/libaxolotlsd.git
