@@ -42,14 +42,16 @@ int main(int argc, char **argv) {
     auto byte = static_cast<axolotlsd::U8>(ch);
     song_bytes.emplace_back(byte);
   }
-	auto sfx00 = axolotlsd::sfx::load_xxd_format(sfx00_raw, sfx00_raw_len);
+  auto sfx00 = axolotlsd::sfx::load_xxd_format(sfx00_raw, sfx00_raw_len);
   auto player = axolotlsd::player{32, SAMPLE_RATE, USE_STEREO};
-  player.put_environment(axolotlsd::environment{.feedback_L = 0.8f,
-                                                .feedback_R = 0.8f,
-                                                .wet_L = -0.25f,
-                                                .wet_R = 0.25f,
-                                                .cursor_increment = 0x01,
-                                                .cursor_max = 0x1400});
+  auto filter = axolotlsd::environment::parse_sfc_echo(
+      {0x0d, 0x22, 0x22, 0x24, 0x11, 0xf0, 0x03, 0xff});
+  player.put_environment(axolotlsd::environment{.feedback_L = 0.5f,
+                                                .feedback_R = 0.5f,
+                                                .wet_L = 0.66f,
+                                                .wet_R = 0.66f,
+                                                .cursor_max = 0x2000,
+                                                .fir_filter = filter});
   player.play(axolotlsd::song::load(song_bytes));
   InitWindow(640, 480, "AxolotlSD C++ tester " axolotlsd_test_VSTRING_FULL);
   InitAudioDevice();
@@ -72,14 +74,22 @@ int main(int argc, char **argv) {
     if (IsKeyReleased('P')) {
       player.playback = !player.playback;
     }
-		if (IsKeyReleased('W')) {
-			player.queue_sfx(axolotlsd::sfx{sfx00});
-		}
+    if (IsKeyReleased('Q')) {
+      sfx00.pan_L = 1.0f;
+      sfx00.pan_R = 0.0f;
+      player.queue_sfx(axolotlsd::sfx{sfx00});
+    }
+    if (IsKeyReleased('E')) {
+      sfx00.pan_L = 0.0f;
+      sfx00.pan_R = 1.0f;
+      player.queue_sfx(axolotlsd::sfx{sfx00});
+    }
     if (player.playback) {
       DrawText("Music playing, 'P' pauses", 20, 50, 20, GREEN);
     } else {
       DrawText("Music paused, 'P' plays", 20, 50, 20, RED);
     }
+    DrawText("SFX: 'Q' = Lch, 'E' = Rch", 20, 80, 20, GRAY);
     EndDrawing();
   }
   StopAudioStream(audio_stream);
