@@ -53,6 +53,7 @@ int main(int argc, char **argv) {
                                                 .cursor_max = 0x1000,
                                                 .fir_filter = filter});
   player.load(axolotlsd::song::load(song_bytes));
+  player.master_volume = 0.25f;
 	player.play();
   InitWindow(1280, 720, "AxolotlSD C++ tester " axolotlsd_test_VSTRING_FULL);
   InitAudioDevice();
